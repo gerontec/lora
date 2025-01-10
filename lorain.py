@@ -2,11 +2,23 @@
 import serial
 import logging
 import time
+import socket
 
-# Configure logging
+# Configure logging to file only
 logging.basicConfig(filename='/tmp/lorain.log', level=logging.INFO, 
                     format='%(asctime)s - %(message)s', 
                     datefmt='%Y-%m-%d %H:%M:%S')
+
+def get_local_ip_address():
+    try:
+        # Get the hostname
+        hostname = socket.gethostname()
+        # Get the IP address associated with that hostname
+        ip_address = socket.gethostbyname(hostname)
+        return ip_address
+    except socket.error:
+        logging.error("Failed to get local IP address")
+        return "0.0.0.0"  # Return a default value if fetching the IP fails
 
 def setup_serial():
     try:
@@ -23,39 +35,71 @@ def setup_serial():
         logging.error(f"Error opening serial port: {e}")
         return None
 
-def decode_partial_utf8(data):
-    try:
-        return data.decode('utf-8'), b''
-    except UnicodeDecodeError as e:
-        # Decode up to the point of the error
-        valid_part = data[:e.start].decode('utf-8')
-        invalid_bytes = data[e.start:]
-        return valid_part, invalid_bytes
+def send_rssi_command(ser):
+    # Command to read RSSI as byte sequence
+    rssi_command = b'\xC0\xC1\xC2\xC3\x00\x01'  # Command to read registers 0x00 and 0x01
+    
+    # Get the local IP address
+    ip_address = get_local_ip_address()
+    ip_message = f"lorain.py {ip_address}".encode('utf-8')
+    ser.write(ip_message)
+    ser.write(rssi_command)
+    logging.info(f"Sent RSSI query command: {rssi_command.hex().upper()}")
+
+def process_rssi_response(response):
+    if len(response) < 4 or not response.startswith(b'\xC1'):
+        return None
+    # Expected format: C1 + address + read length + RSSI value
+    rssi_value = response[3]
+    return {
+        "RSSI Value": - (256 - rssi_value)
+    }
 
 def main():
     ser = setup_serial()
     if ser is None:
-        print("Failed to open serial port. Exiting.")
+        logging.info("Failed to open serial port. Exiting.")
         return
 
-    print("Listening for incoming LoRa messages...")
+    logging.info("Listening for incoming LoRa messages...")
+
+    # Enable RSSI once at the start
+    ser.write(b"Channel RSSI enabled\r\n")
+    logging.info("Sent RSSI enable command: Channel RSSI enabled")
 
     try:
-        while True:
-            # Read from the serial port
-            data = ser.read(100)  # Adjust the buffer size according to your needs
-            if data:
-                decoded, remaining = decode_partial_utf8(data)
-                if remaining:
-                    # Log both the decoded part and the remaining hex part
-                    log_message = f"Received: {decoded} (hex: {remaining.hex(' ').upper()})"
-                else:
-                    log_message = f"Received: {decoded}"
-                
-                logging.info(log_message)
-                print(log_message)  # Optional: Print to console
-    except KeyboardInterrupt:
-        print("Interrupted by user. Stopping...")
+        for i in range(100):  # Example: perform 100 RSSI queries
+            # Read any incoming data that might be UTF-8 messages
+            normal_data = ser.read(200)  # Read buffer for potential UTF-8 messages
+            if normal_data:
+                try:
+                    # Attempt to decode as UTF-8
+                    decoded_msg = normal_data.decode('utf-8', errors='ignore')
+                    if decoded_msg.strip():  # Avoid logging empty strings
+                        logging.info(f"Received UTF-8 message: {decoded_msg.strip()}")
+                except UnicodeDecodeError:
+                    # If not UTF-8, log in hex
+                    logging.info(f"Received non-UTF-8 data (hex): {normal_data.hex(' ').upper()}")
+
+            send_rssi_command(ser)
+            
+            # Read specifically for RSSI response
+            time.sleep(0.1)  # Small delay to give the module time to respond
+            rssi_response = ser.read(20)  # Read more to capture potentially multiple responses
+            
+            # Split the response into individual responses if multiple are received
+            responses = rssi_response.split(b'\xC1')
+            for resp in responses:
+                if resp and len(resp) >= 3:  # Ensure there's enough data to process
+                    full_response = b'\xC1' + resp
+                    rssi_values = process_rssi_response(full_response)
+                    if rssi_values:
+                        logging.info(f"RSSI Value: {rssi_values['RSSI Value']} dBm")
+                    else:
+                        logging.info(f"Possible RSSI response (hex): {full_response.hex(' ').upper()} - Unrecognized format")
+
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
     finally:
         ser.close()
 
