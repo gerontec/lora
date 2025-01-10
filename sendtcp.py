@@ -24,14 +24,6 @@ def send_message(sock, message):
     logging.info(f"Sent: {full_message}")  # Log sent message with timestamp
 
 def send_rssi_command(sock):
-    # Command to enable RSSI (only needed if not already enabled)
-    enable_rssi = b"Channel RSSI enabled\r\n"
-    sock.send(enable_rssi)
-    logging.info(f"Sent: {enable_rssi.decode().strip()}")
-    
-    # Wait for a moment to ensure the command is processed
-    time.sleep(1)
-    
     # Send command to read RSSI
     #rssi_command = b"C0C1C2C30001"  # Command to read registers 0x00 and 0x01
     rssi_command = b'\xC0\xC1\xC2\xC3\x00\x02'
