@@ -40,12 +40,12 @@ def send_rssi_command(ser):
     rssi_command = b'\xC0\xC1\xC2\xC3\x00\x02'  # Command to read registers 0x00 and 0x01
     gateway = get_default_gateway()
     gateway_message = f"Gateway: {gateway}".encode('utf-8')
-    ser.write(gateway_message + b'\r\n')
+    #ser.write(gateway_message + b'\r\n')
     ser.write(rssi_command)
     logging.info(f"Sent RSSI query command: {rssi_command.hex().upper()}")
 
 def process_rssi_response(response):
-    if len(response) < 4 or not response.startswith(b'\xC1'):
+    if not response.startswith(b'\xC1'):
         return None
     # Expected format: C1 + address + read length + RSSI value
     rssi_value = response[3]
@@ -53,10 +53,11 @@ def process_rssi_response(response):
         "RSSI Value": - (256 - rssi_value)
     }
 
-def send_ack(ser):
-    ack_message = b"ACK\r\n"
-    ser.write(ack_message)
-    logging.info(f"Sent ACK response")
+def send_rssi_back(ser, rssi_value):
+    # Send RSSI value back to the sender in ASCII format followed by CRLF
+    rssi_response = f"{rssi_value}\r\n".encode('ascii')
+    ser.write(rssi_response)
+    logging.info(f"Sent RSSI value back: {rssi_value}")
 
 def main():
     ser = setup_serial()
@@ -75,51 +76,44 @@ def main():
 
     try:
         i = 0
-        while True:  # Changed from range to an infinite loop to keep the script running
+        while True:  
             # Read any incoming data which might include UTF-8 messages or RSSI responses
-            normal_data = ser.read(240)  # Increased buffer size
+            normal_data = ser.read(240)  
             
             if normal_data:
                 message_buffer.extend(normal_data)
                 
-                # Process all data in the buffer
                 while message_buffer:
-                    # Try to find an RSSI response first
                     if b'\xC1' in message_buffer:
                         start = message_buffer.find(b'\xC1')
-                        if start + 4 <= len(message_buffer):  # Ensure we have at least 4 bytes for RSSI response
-                            rssi_response = message_buffer[start:start+4]  # Assuming RSSI response is 4 bytes long
+                        if start + 4 <= len(message_buffer): 
+                            rssi_response = message_buffer[start:start+4]  
                             rssi_values = process_rssi_response(rssi_response)
                             if rssi_values:
-                                logging.info(f"RSSI Value: {rssi_values['RSSI Value']} dBm from Gateway {get_default_gateway()}")
+                                logging.info(f"RSSI Value: {rssi_values['RSSI Value']} dBm from {get_default_gateway()}")
+                                send_rssi_back(ser, rssi_values['RSSI Value'])
                             del message_buffer[start:start+4]
                         else:
-                            break  # Wait for more data if we don't have enough for an RSSI response
+                            break 
                     else:
-                        # If no RSSI response, try to decode as UTF-8 message
                         try:
                             end_of_message = message_buffer.find(b'\n')
                             if end_of_message != -1:
                                 decoded_msg = message_buffer[:end_of_message+1].decode('utf-8', errors='ignore').strip()
-                                # Add default gateway to the log message
-                                logging.info(f"Received UTF-8 message from Gateway {get_default_gateway()}: {decoded_msg}")
-                                # Send ACK for each received message
-                                send_ack(ser)
+                                logging.info(f"Received UTF-8 from {get_default_gateway()}: {decoded_msg}")
                                 del message_buffer[:end_of_message+1]
                             else:
-                                # If no newline is found, this might be part of a larger message, so wait for more data
                                 break
                         except UnicodeDecodeError:
-                            # If decoding fails, log the raw data in hex and clear buffer
                             logging.info(f"Received non-UTF-8 data (hex) from Gateway {get_default_gateway()}: {message_buffer.hex(' ').upper()}")
                             message_buffer.clear()
 
             # Send RSSI command once per minute
-            if i % 60 == 0:  # 60 iterations at 1 second each equals 1 minute
+            if i % 6 == 0:  
                 send_rssi_command(ser)
             
             i += 1
-            time.sleep(1)  # Sleep for 1 second to keep the loop running but not too fast
+            time.sleep(1)  
 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
