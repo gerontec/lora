@@ -50,8 +50,8 @@ def parse_config(config):
     air_rate_code = reg0 & 0x07
     air_rates = ["0.3k", "1.2k", "2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k"]
     air_rate = air_rates[air_rate_code] if air_rate_code < len(air_rates) else "Unknown"
-    baud_rate_code = (reg0 >> 5) & 0x03
-    baud_rates = ["1200", "2400", "4800", "9600"]
+    baud_rate_code = (reg0 >> 5) & 0x07  # Updated to account for more baud rates
+    baud_rates = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"]
     baud_rate = baud_rates[baud_rate_code] if baud_rate_code < len(baud_rates) else "Unknown"
     parity_code = (reg0 >> 3) & 0x03
     parities = ["8N1", "8O1", "8E1", "8N1"]
@@ -59,10 +59,11 @@ def parse_config(config):
     power_code = reg1 & 0x03
     powers = ["13dBm", "18dBm", "22dBm", "27dBm"]
     power = powers[power_code] if power_code < len(powers) else "Unknown"
-    fixed_transmission = "Fixed-point" if reg3 & 0x01 else "Transparent"
-    relay_function = "Enabled" if reg3 & 0x20 else "Disabled"
-    lbt_enable = "Enabled" if reg3 & 0x10 else "Disabled"
-    rssi_enable = "Enabled" if reg1 & 0x20 else "Disabled"
+    fixed_transmission = "Fixed-point" if reg3 & 0x40 else "Transparent"  # Bit 6 for fixed-point transmission
+    relay_function = "Enabled" if reg3 & 0x20 else "Disabled"  # Bit 5 for relay function
+    lbt_enable = "Enabled" if reg3 & 0x10 else "Disabled"  # Bit 4 for LBT enable
+    rssi_enable = "Enabled" if reg1 & 0x20 else "Disabled"  # Assuming RSSI enable in REG1
+    noise_enable = "Enabled" if reg3 & 0x80 else "Disabled"  # Bit 7 for Noise enable in REG3
     
     return {
         "Address": f"0x{address:04X}",
@@ -75,38 +76,58 @@ def parse_config(config):
         "Fixed Transmission": fixed_transmission,
         "Relay Function": relay_function,
         "LBT Enable": lbt_enable,
-        "RSSI Enable": rssi_enable
+        "RSSI Enable": rssi_enable,
+        "Noise Enable": noise_enable  # New entry for noise enablement
     }
 
-def create_config(address, network_address, channel, air_rate, baud_rate, parity, power, fixed_transmission, relay_function, lbt_enable, rssi_enable):
+def create_config(address, network_address, channel, air_rate, baud_rate, parity, power, fixed_transmission, relay_function, lbt_enable, rssi_enable, noise_enable="0"):
     addh = (address >> 8) & 0xFF
     addl = address & 0xFF
     netid = network_address
 
     air_rates = {"0.3k": 0, "1.2k": 1, "2.4k": 2, "4.8k": 3, "9.6k": 4, "19.2k": 5, "38.4k": 6, "62.5k": 7}
-    baud_rates = {"1200": 0, "2400": 1, "4800": 2, "9600": 3}
+    baud_rates = {"1200": 0, "2400": 1, "4800": 2, "9600": 3, "19200": 4, "38400": 5, "57600": 6, "115200": 7}
     parities = {"8N1": 0, "8O1": 1, "8E1": 2}
     powers = {"13dBm": 0, "18dBm": 1, "22dBm": 2, "27dBm": 3}
 
     reg0 = (baud_rates[baud_rate] << 5) | (parities[parity] << 3) | air_rates[air_rate]
     reg1 = 0xE0 | powers[power]  # Base configuration for REG1
 
-    # Modify REG1 for RSSI enable:
+    # Modify REG1 for RSSI and Noise enable:
     if rssi_enable == "1":
-        reg1 |= 0x20  # Enable RSSI by setting bit 5 in REG1
+        reg1 |= 0x20  # Enable RSSI by setting bit 5 in REG1 (assuming this is correct for REG1)
     else:
         reg1 &= ~0x20  # Disable RSSI by clearing bit 5 in REG1
 
+    if noise_enable == "1":
+        reg1 |= 0x20  # Enable Ambient Noise RSSI by setting bit 5 in REG1 (assuming this is correct for REG1)
+    else:
+        reg1 &= ~0x20  # Disable Ambient Noise RSSI by clearing bit 5 in REG1
+
     reg2 = channel
     reg3 = 0x80  # Base value for REG3
-    if fixed_transmission == "1":
-        reg3 |= 0x01
-    if relay_function == "1":
-        reg3 |= 0x20
+
+    # Modify REG3 based on new specifications:
+    if rssi_enable == "1":  # This is for RSSI enable in REG3, not to be confused with REG1's RSSI
+        reg3 |= 0x80  # Enable RSSI by setting bit 7 in REG3
     else:
-        reg3 &= ~0x20  # Clear the relay function bit if it's disabled
+        reg3 &= ~0x80  # Disable RSSI by clearing bit 7 in REG3
+
+    if fixed_transmission == "1":
+        reg3 |= 0x40  # Enable fixed-point transmission by setting bit 6 in REG3
+    else:
+        reg3 &= ~0x40  # Disable fixed-point transmission, use transparent mode by clearing bit 6
+
+    if relay_function == "1":
+        reg3 |= 0x20  # Enable relay function by setting bit 5
+    else:
+        reg3 &= ~0x20  # Disable relay function by clearing bit 5
+
     if lbt_enable == "1":
-        reg3 |= 0x10
+        reg3 |= 0x10  # Enable LBT by setting bit 4
+    else:
+        reg3 &= ~0x10  # Disable LBT by clearing bit 4
+
     reg4 = 0
     reg5 = 0
 
@@ -130,21 +151,8 @@ def read_rssi(ser):
     return {
         "Current Noise RSSI": current_noise_dbm,
         "Last Received RSSI": last_received_dbm
-    }    
-    # Check if response matches expected format
-    if response[1] != 0x00 or response[2] != 0x02:
-        raise ValueError(f"RSSI command response format incorrect: {response.hex()}")
-    
-    current_noise_rssi = response[3]
-    last_received_rssi = response[4]
-    
-    current_noise_dbm = - (256 - current_noise_rssi)
-    last_received_dbm = - (256 - last_received_rssi)
-    
-    return {
-        "Current Noise RSSI": current_noise_dbm,
-        "Last Received RSSI": last_received_dbm
     }
+
 def main():
     parser = argparse.ArgumentParser(description="Read/Write configuration for E22 LoRa module")
     parser.add_argument("--port", default="/dev/ttyUSB0", help="Serial port")
@@ -152,7 +160,7 @@ def main():
     parser.add_argument("--network-address", type=lambda x: int(x, 0), default=0, help="Set network address (e.g., 0x00)")
     parser.add_argument("--channel", type=int, help="Set channel (0-83)")
     parser.add_argument("--air-rate", choices=["0.3k", "1.2k", "2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k"], help="Set air rate")
-    parser.add_argument("--baud-rate", choices=["1200", "2400", "4800", "9600"], help="Set baud rate")
+    parser.add_argument("--baud-rate", choices=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"], help="Set baud rate")
     parser.add_argument("--parity", choices=["8N1", "8O1", "8E1"], help="Set parity")
     parser.add_argument("--power", choices=["13dBm", "18dBm", "22dBm", "27dBm"], help="Set transmitting power")
     parser.add_argument("--fixed-transmission", choices=["0", "1"], help="Set fixed-point transmission (0: Transparent, 1: Fixed-point)")
@@ -164,7 +172,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        with serial.Serial(args.port, baudrate=9600, timeout=1) as ser:
+        # Here we use args.baud_rate if provided, otherwise default to 9600
+        baud_rate_to_use = int(args.baud_rate) if args.baud_rate else 9600
+        with serial.Serial(args.port, baudrate=baud_rate_to_use, timeout=1) as ser:
             if args.write_key:
                 write_encryption_keys(ser, *args.write_key)
                 print(f"Encryption keys written: 0x{args.write_key[0]:02X} 0x{args.write_key[1]:02X}")
@@ -219,6 +229,14 @@ def main():
 
                 write_config(ser, new_config)
                 print("Configuration updated successfully.")
+                
+                # If baud rate was changed, we need to close and reopen the serial connection with the new baud rate
+                if args.baud_rate:
+                    ser.close()
+                    time.sleep(0.5)  # Small delay to ensure the module has processed the command
+                    baud_rate_to_use = int(args.baud_rate)
+                    ser = serial.Serial(args.port, baudrate=baud_rate_to_use, timeout=1)
+
                 current_config = read_config(ser)  # Re-read the config to verify changes
                 parsed_config = parse_config(current_config)
 
@@ -232,12 +250,12 @@ def main():
             print(f"Raw Config: {current_config.hex(' ').upper()}")
 
             #if 'RSSI Enable' in parsed_config and parsed_config['RSSI Enable'] == "Enabled":
-                #rssi_values = read_rssi(ser)
-                #print(f"\nRSSI Values:")
-                #print(f"Current Noise (dBm): {rssi_values['Current Noise RSSI']}")
-                #print(f"Last Received (dBm): {rssi_values['Last Received RSSI']}")
+            #    rssi_values = read_rssi(ser)
+            #    print(f"\nRSSI Values:")
+            #    print(f"Current Noise (dBm): {rssi_values['Current Noise RSSI']}")
+            #    print(f"Last Received (dBm): {rssi_values['Last Received RSSI']}")
 
-            ## Print example command line
+            # Print example command line
             print("\nExample Command Line for setting all possible arguments:")
             example_cmd = (
                 "./e22.py --port /dev/ttyUSB0 "
