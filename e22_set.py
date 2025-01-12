@@ -15,12 +15,9 @@ def set_parameters(ser, args):
     # Construct REG1
     reg1 = (args.sub_packet << 6) | (args.rssi_noise << 5) | (args.mode_switch << 2) | args.tx_power
 
-    # Construct REG3
-    reg3 = (args.rssi_byte << 7) | (args.transmission << 6) | (args.relay << 5) | (args.lbt << 4)
-
-    # Construct command
-    command = bytearray([0xCF, 0xCF, 0xC0, 0x00, 0x09])
-    command.extend([args.addh, args.addl, args.netid, reg0, reg1, args.channel, reg3, args.crypt_h, args.crypt_l])
+    # Construct command for setting parameters
+    command = bytearray([0xC2, 0x00, 0x04])  # Temporary settings command header
+    command.extend([args.addh, args.addl, args.netid, reg0])  # ADDH, ADDL, NETID, REG0
 
     response = send_command_and_read(ser, command)
     print(f"Set parameters response: {response.hex().upper()}")
@@ -38,16 +35,14 @@ def main():
     parser.add_argument("--mode-switch", type=int, default=0, help="Software Mode Switching (0-1)")
     parser.add_argument("--tx-power", type=int, default=0, help="Transmitting Power (0-3)")
     parser.add_argument("--channel", type=int, required=True, help="Channel (0-83)")
-    parser.add_argument("--rssi-byte", type=int, default=0, help="Enable RSSI Byte (0-1)")
-    parser.add_argument("--transmission", type=int, default=0, help="Transmission Method (0-1)")
-    parser.add_argument("--relay", type=int, default=0, help="Relay Function (0-1)")
-    parser.add_argument("--lbt", type=int, default=0, help="LBT Enable (0-1)")
-    parser.add_argument("--crypt-h", type=int, default=0, help="Encryption Key High Byte (0-255)")
-    parser.add_argument("--crypt-l", type=int, default=0, help="Encryption Key Low Byte (0-255)")
+    
     args = parser.parse_args()
 
     ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=1)
+    
+    # Set parameters on the E22 module
     set_parameters(ser, args)
+    
     ser.close()
 
 if __name__ == "__main__":
