@@ -41,7 +41,7 @@ DR = 5                        # Datenrate (SF7 für EU868)
 
 # Topic Format Selection
 # Optionen: "chirpstack" oder "dragino"
-TOPIC_FORMAT = "chirpstack"
+TOPIC_FORMAT = "dragino"
 
 # Client und Channel IDs für Dragino Format
 CLIENT_ID = "dragino-27e318"  # Dragino Client ID (aus Hostname)
