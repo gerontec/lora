@@ -246,6 +246,9 @@ class DraginoMonitor:
 
 
 def main():
+    # Declare globals before using them
+    global MQTT_BROKER, MQTT_TOPIC
+
     parser = argparse.ArgumentParser(
         description="Remote LoRa packet monitor for Dragino Gateway"
     )
@@ -268,7 +271,6 @@ def main():
     args = parser.parse_args()
 
     # Update globals mit CLI-Argumenten
-    global MQTT_BROKER, MQTT_TOPIC
     MQTT_BROKER = args.broker
     MQTT_TOPIC = args.topic
 
