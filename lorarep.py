@@ -53,9 +53,11 @@ if TOPIC_FORMAT == "dragino":
     TOPIC_DOWN = f"{CLIENT_ID}/{CHANNEL_ID}/cmd"
     TOPIC_SUB = f"{CLIENT_ID}/+/data"  # Subscribe only to data topics (avoid feedback loop)
 else:  # chirpstack
-    TOPIC_UP = f"gateway/{GATEWAY_ID}/event/up"
-    TOPIC_DOWN = f"gateway/{GATEWAY_ID}/command/down"
-    TOPIC_SUB = TOPIC_UP
+    # ChirpStack nutzt lowercase Gateway-IDs in MQTT topics
+    gateway_id_lower = GATEWAY_ID.lower()
+    TOPIC_UP = f"gateway/{gateway_id_lower}/event/up"
+    TOPIC_DOWN = f"gateway/{gateway_id_lower}/command/down"
+    TOPIC_SUB = f"gateway/{gateway_id_lower}/event/up"
 
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
