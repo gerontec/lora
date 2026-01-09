@@ -51,7 +51,7 @@ CHANNEL_ID = "gateway1"       # Dein Channel
 if TOPIC_FORMAT == "dragino":
     TOPIC_UP = f"{CLIENT_ID}/{CHANNEL_ID}/data"
     TOPIC_DOWN = f"{CLIENT_ID}/{CHANNEL_ID}/cmd"
-    TOPIC_SUB = f"{CLIENT_ID}/#"  # Subscribe to all channels
+    TOPIC_SUB = f"{CLIENT_ID}/+/data"  # Subscribe only to data topics (avoid feedback loop)
 else:  # chirpstack
     TOPIC_UP = f"gateway/{GATEWAY_ID}/event/up"
     TOPIC_DOWN = f"gateway/{GATEWAY_ID}/command/down"
