@@ -418,6 +418,307 @@ E90-DTU:       Funktioniert auch auf 433 MHz
 Rufzeichen:    Muss gesendet werden
 ```
 
+## Konfigurations-Persistenz & Langzeit-Zuverlässigkeit
+
+### ⚠️ KRITISCH für jahrelangen autarken Betrieb!
+
+**Frage:** Bleibt die RELAY=ON Konfiguration nach Stromausfall erhalten?
+
+**Antwort:** Das muss **VOR** der Berg-Installation getestet werden!
+
+### Persistenz-Test durchführen
+
+**WICHTIG:** Diesen Test IMMER durchführen bevor E90-DTU auf den Berg kommt!
+
+```bash
+# Persistenz-Test Skript verwenden:
+python3 e90_persistence_test.py --port /dev/ttyUSB0 --test single
+
+# Oder Stress-Test mit 3× Power-Cycles:
+python3 e90_persistence_test.py --port /dev/ttyUSB0 --test stress --cycles 3
+```
+
+**Test-Ablauf:**
+1. Skript liest aktuelle Konfiguration aus
+2. Benutzer schaltet E90-DTU aus und wieder ein (Power-Cycle)
+3. Skript liest Konfiguration erneut aus
+4. Automatischer Vergleich und Warnung bei Unterschieden
+
+### Was passiert bei Stromausfall?
+
+**Szenario 1: Konfiguration ist PERSISTENT** ✅
+```
+Power OFF → Power ON
+├─ E90-DTU bootet automatisch
+├─ Liest Config aus Flash/EEPROM
+├─ RELAY=ON wird wiederhergestellt
+└─ Repeater funktioniert sofort!
+```
+
+**Szenario 2: Konfiguration ist NICHT PERSISTENT** ❌
+```
+Power OFF → Power ON
+├─ E90-DTU bootet mit Werkseinstellungen
+├─ RELAY=OFF (kein Repeater-Betrieb!)
+├─ Falsche Frequenz/Parameter
+└─ System funktioniert NICHT!
+```
+
+### Ebyte E90-DTU Konfigurations-Speicher
+
+**Laut Datenblatt:**
+```
+- Konfiguration wird in EEPROM gespeichert
+- Persistenz über Power-Cycles: JA
+- Retention Time: >10 Jahre
+- Write Cycles: >100,000
+```
+
+→ **Theoretisch: Konfiguration sollte persistent sein!**
+
+**Aber:** IMMER testen! Firmware-Versionen können variieren!
+
+### Watchdog-System für maximale Sicherheit
+
+Selbst wenn Persistenz funktioniert, kann es andere Fehler geben:
+- Hardware-Defekt
+- Cosmic Ray Bit-Flip
+- Firmware-Bug nach x Jahren
+
+**Lösung: Watchdog mit Auto-Recovery**
+
+#### Option 1: Hardware-Watchdog (empfohlen!)
+
+```
+┌─────────────┐      ┌──────────────┐      ┌──────────────┐
+│  E90-DTU    │◄────►│  ATtiny85    │◄────►│ Solar System │
+│  (Repeater) │      │  (Watchdog)  │      │   (Power)    │
+└─────────────┘      └──────────────┘      └──────────────┘
+                            │
+                            │ Monitoring:
+                            ├─ E90-DTU sendet "Heartbeat"
+                            ├─ Kein Heartbeat nach 5 Min
+                            └─> Power-Cycle via MOSFET
+```
+
+**ATtiny85 Watchdog-Code (Arduino):**
+```cpp
+// Watchdog für E90-DTU Repeater
+// Überwacht LoRa-Heartbeat, rebootet bei Ausfall
+
+#define POWER_CONTROL_PIN 0  // MOSFET Gate für E90-DTU Power
+#define HEARTBEAT_PIN 1      // Input von E90-DTU
+#define TIMEOUT_MS 300000    // 5 Minuten
+
+unsigned long lastHeartbeat = 0;
+
+void setup() {
+  pinMode(POWER_CONTROL_PIN, OUTPUT);
+  pinMode(HEARTBEAT_PIN, INPUT);
+  digitalWrite(POWER_CONTROL_PIN, HIGH);  // E90-DTU AN
+}
+
+void loop() {
+  // Heartbeat empfangen?
+  if (digitalRead(HEARTBEAT_PIN) == HIGH) {
+    lastHeartbeat = millis();
+  }
+
+  // Timeout check
+  if (millis() - lastHeartbeat > TIMEOUT_MS) {
+    // REBOOT E90-DTU
+    digitalWrite(POWER_CONTROL_PIN, LOW);   // AUS
+    delay(5000);                            // 5 Sekunden warten
+    digitalWrite(POWER_CONTROL_PIN, HIGH);  // AN
+    lastHeartbeat = millis();               // Reset Timer
+  }
+
+  delay(1000);
+}
+```
+
+**Hardware:**
+- ATtiny85: ~2 EUR
+- N-Channel MOSFET (IRLZ44N): ~1 EUR
+- Stromverbrauch: <1 mA
+
+#### Option 2: Software-Watchdog (Raspberry Pi)
+
+```python
+#!/usr/bin/python3
+# e90_watchdog.py - Überwacht E90-DTU via RS485
+
+import serial
+import time
+import subprocess
+
+SERIAL_PORT = '/dev/ttyUSB0'
+TIMEOUT = 300  # 5 Minuten
+POWER_GPIO = 17  # BCM Pin für Relais
+
+def check_e90_alive(ser):
+    """Prüft ob E90-DTU antwortet"""
+    try:
+        ser.write(b"AT\r\n")
+        time.sleep(0.5)
+        response = ser.read(100)
+        return b"OK" in response
+    except:
+        return False
+
+def power_cycle_e90():
+    """Power-Cycle via GPIO-Relais"""
+    subprocess.run(['gpio', 'write', str(POWER_GPIO), '0'])  # OFF
+    time.sleep(5)
+    subprocess.run(['gpio', 'write', str(POWER_GPIO), '1'])  # ON
+    time.sleep(10)  # Boot-Zeit
+
+def main():
+    last_ok = time.time()
+
+    while True:
+        try:
+            ser = serial.Serial(SERIAL_PORT, 9600, timeout=2)
+
+            if check_e90_alive(ser):
+                last_ok = time.time()
+                print(f"✅ E90-DTU OK @ {time.strftime('%H:%M:%S')}")
+            else:
+                if time.time() - last_ok > TIMEOUT:
+                    print("❌ E90-DTU nicht erreichbar! Power-Cycle...")
+                    power_cycle_e90()
+                    last_ok = time.time()
+
+            ser.close()
+
+        except Exception as e:
+            print(f"⚠️ Fehler: {e}")
+
+        time.sleep(60)  # Alle 60 Sekunden prüfen
+
+if __name__ == "__main__":
+    main()
+```
+
+#### Option 3: Extern über LoRa (Monitoring von unten)
+
+```python
+#!/usr/bin/python3
+# e90_remote_monitor.py - Im Tal, monitored Repeater
+
+import time
+import serial
+
+def send_ping():
+    """Sendet Ping an Repeater"""
+    with serial.Serial('/dev/ttyUSB0', 9600) as ser:
+        ser.write(b"PING\n")
+
+def check_response():
+    """Wartet auf Echo vom Repeater"""
+    with serial.Serial('/dev/ttyUSB0', 9600, timeout=10) as ser:
+        data = ser.read(100)
+        return b"PING" in data  # Echo durch Repeater
+
+def alert_admin():
+    """Sendet Alert wenn Repeater offline"""
+    # SMS, E-Mail, Push-Notification, etc.
+    pass
+
+# Monitoring-Loop
+while True:
+    send_ping()
+    if check_response():
+        print("✅ Repeater aktiv")
+    else:
+        print("❌ Repeater offline!")
+        alert_admin()
+
+    time.sleep(3600)  # Jede Stunde
+```
+
+### Konfigurations-Backup-Strategie
+
+**Vor Berg-Installation:**
+
+```bash
+# 1. Konfiguration testen und verifizieren
+python3 e90_persistence_test.py --test stress --cycles 5
+
+# 2. Backup erstellen
+# Wird automatisch gespeichert in: /home/user/lora/config_backups/
+
+# 3. Restore-Skript generieren (automatisch)
+ls -l config_backups/restore_config.sh
+
+# 4. Backup auf USB-Stick kopieren (für Not fall)
+cp -r config_backups/ /media/usb/e90_backup_$(date +%Y%m%d)/
+```
+
+**Backup-Dateien:**
+```
+config_backups/
+├── e90_config_20260109_120000.json  # JSON Backup
+├── restore_config.sh                 # Automatisches Restore
+└── persistence_test_log.txt          # Test-Protokoll
+```
+
+**Im Notfall (Config verloren):**
+```bash
+# Mit Backup wiederherstellen:
+cd /home/user/lora/config_backups
+./restore_config.sh
+
+# Oder manuell:
+python3 e90_repeater_setup.py \
+  --mode repeater \
+  --addr 65535 \
+  --netid 18 \
+  --channel 18 \
+  --tx-pow PWMAX
+```
+
+### Jahrelanger autarker Betrieb - Checkliste
+
+Für **100% Zuverlässigkeit** über viele Jahre:
+
+- [ ] **Persistenz-Test durchgeführt** (min. 3× Power-Cycles)
+- [ ] **Konfigurations-Backup** auf 2 USB-Sticks
+- [ ] **Hardware-Watchdog** installiert (ATtiny85 empfohlen)
+- [ ] **Remote-Monitoring** eingerichtet (Tal → Berg Ping)
+- [ ] **Solar-System überdimensioniert** (200W statt 150W)
+- [ ] **Batterie-Redundanz** (2× 100Ah Akkus parallel)
+- [ ] **Blitzschutz** professionell installiert
+- [ ] **Wetterfestes Gehäuse** IP67+ mit Gore-Tex Membrane
+- [ ] **Jährliche Wartung** geplant (Sommer)
+- [ ] **Notfall-Plan** dokumentiert (Kontaktpersonen, Zugangscode)
+
+### Worst-Case Szenarien & Lösungen
+
+| Szenario | Wahrscheinlichkeit | Lösung |
+|----------|-------------------|---------|
+| **Stromausfall** | Hoch (Winter) | Solar + Batterie überdimensioniert |
+| **Config-Verlust** | Niedrig (wenn getestet) | Hardware-Watchdog mit Auto-Restore |
+| **Hardware-Defekt** | Mittel (nach 3-5 Jahren) | Redundanter E90-DTU (parallel) |
+| **Blitzschlag** | Mittel (Bergspitze!) | Professioneller Blitzschutz + Versicherung |
+| **Vandalismus** | Niedrig (abgelegen) | Verstecktes Gehäuse, GPS-Tracker |
+| **Schnee/Eis** | Hoch (Winter) | Gehäuse-Heizung (12V, 5W), Solar-Panel Neigung 60° |
+
+### Redundanz-Setup (Option für kritische Deployments)
+
+**Doppelter E90-DTU Repeater:**
+
+```
+Berg 1500m:
+├─ E90-DTU Primary   (RELAY=ON, Channel 18)
+├─ E90-DTU Secondary (RELAY=ON, Channel 18, Backup-Power)
+├─ Solar-System #1 → E90-DTU #1
+├─ Solar-System #2 → E90-DTU #2
+└─ Bei Ausfall #1: #2 übernimmt automatisch!
+```
+
+**Kosten:** +~300 EUR, aber **99.9% Uptime**!
+
 ## Zusammenfassung
 
 ### ✅ E90-DTU Vorteile
