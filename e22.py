@@ -93,25 +93,20 @@ def create_config(address, network_address, channel, air_rate, baud_rate, parity
     reg0 = (baud_rates[baud_rate] << 5) | (parities[parity] << 3) | air_rates[air_rate]
     reg1 = 0xE0 | powers[power]  # Base configuration for REG1
 
-    # Modify REG1 for RSSI and Noise enable:
+    # Modify REG1 for RSSI enable:
     if rssi_enable == "1":
-        reg1 |= 0x20  # Enable RSSI by setting bit 5 in REG1 (assuming this is correct for REG1)
+        reg1 |= 0x20  # Enable RSSI by setting bit 5 in REG1
     else:
         reg1 &= ~0x20  # Disable RSSI by clearing bit 5 in REG1
-
-    if noise_enable == "1":
-        reg1 |= 0x20  # Enable Ambient Noise RSSI by setting bit 5 in REG1 (assuming this is correct for REG1)
-    else:
-        reg1 &= ~0x20  # Disable Ambient Noise RSSI by clearing bit 5 in REG1
 
     reg2 = channel
     reg3 = 0x80  # Base value for REG3
 
-    # Modify REG3 based on new specifications:
-    if rssi_enable == "1":  # This is for RSSI enable in REG3, not to be confused with REG1's RSSI
-        reg3 |= 0x80  # Enable RSSI by setting bit 7 in REG3
+    # Modify REG3 for Noise enable:
+    if noise_enable == "1":
+        reg3 |= 0x80  # Enable Ambient Noise RSSI by setting bit 7 in REG3
     else:
-        reg3 &= ~0x80  # Disable RSSI by clearing bit 7 in REG3
+        reg3 &= ~0x80  # Disable Ambient Noise RSSI by clearing bit 7 in REG3
 
     if fixed_transmission == "1":
         reg3 |= 0x40  # Enable fixed-point transmission by setting bit 6 in REG3
