@@ -22,13 +22,13 @@ DR = 5                        # Datenrate (SF7 für EU868)
 TOPIC_UP = f"gateway/{GATEWAY_ID}/event/up"
 TOPIC_DOWN = f"gateway/{GATEWAY_ID}/command/down"
 
-def on_connect(client, userdata, flags, rc):
-    if rc == 0:
-        logging.info(f"Verbunden mit Broker (Code {rc})")
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code == 0:
+        logging.info(f"Verbunden mit Broker (Code {reason_code})")
         client.subscribe(TOPIC_UP)
         logging.info(f"Abonniert: {TOPIC_UP}")
     else:
-        logging.error(f"Verbindung fehlgeschlagen (Code {rc})")
+        logging.error(f"Verbindung fehlgeschlagen (Code {reason_code})")
 
 def on_message(client, userdata, msg):
     try:
@@ -88,12 +88,12 @@ def on_message(client, userdata, msg):
     except Exception as e:
         logging.error(f"Fehler: {e}", exc_info=True)
 
-def on_disconnect(client, userdata, rc):
-    if rc != 0:
-        logging.warning(f"Unerwartete Trennung vom Broker (Code {rc})")
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
+    if reason_code != 0:
+        logging.warning(f"Unerwartete Trennung vom Broker (Code {reason_code})")
 
 # MQTT Client Setup
-client = mqtt.Client()
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_disconnect = on_disconnect
