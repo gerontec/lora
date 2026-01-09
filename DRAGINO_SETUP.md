@@ -130,6 +130,7 @@ Falls ChirpStack Probleme macht, kann man auch direkt MQTT nutzen.
 
 ```bash
 # MQTT Server auf heissa.de setzen
+# WICHTIG: heissa.de = 10.0.0.1 (NICHT 10.0.0.2!)
 uci set mqtt.General.url='10.0.0.1'
 uci set mqtt.General.port='1883'
 
@@ -149,10 +150,13 @@ uci set mqtt.General.pwd=''
 # Speichern und anwenden
 uci commit mqtt
 
-# Service neu starten
+# Service neu starten (MQTT Service heißt iot-http auf dem Dragino!)
 /etc/init.d/iot-http restart
 
-# Prüfen
+# Prüfen ob Prozess läuft
+ps | grep mqtt_process
+
+# Konfiguration verifizieren
 uci show mqtt.General | grep -E "url|pub_topic|sub_topic|cid"
 ```
 
