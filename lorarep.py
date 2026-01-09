@@ -35,7 +35,7 @@ logging.basicConfig(
 
 # --- KONFIGURATION ---
 BROKER = "127.0.0.1"          # Da das Skript auf heissa.de läuft
-GATEWAY_ID = "48621185db7c38ca" # Deine ID aus der local_conf.json
+GATEWAY_ID = "48621185DB7C38CA" # Local ID aus der local_conf.json
 FREQ_HZ = 868100000           # Die Frequenz deines E22 (z.B. 868.1 MHz)
 DR = 5                        # Datenrate (SF7 für EU868)
 
@@ -44,7 +44,7 @@ DR = 5                        # Datenrate (SF7 für EU868)
 TOPIC_FORMAT = "dragino"
 
 # Client und Channel IDs für Dragino Format
-CLIENT_ID = "lora-repeater"   # Deine Client ID
+CLIENT_ID = "dragino-27e318"  # Dragino Client ID (aus Hostname)
 CHANNEL_ID = "gateway1"       # Dein Channel
 
 # Topics werden basierend auf Format gesetzt
