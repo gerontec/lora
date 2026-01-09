@@ -47,6 +47,14 @@ TOPIC_FORMAT = "dragino"
 CLIENT_ID = "dragino-27e318"  # Dragino Client ID (aus Hostname)
 CHANNEL_ID = "gateway1"       # Dein Channel
 
+# E90-DTU Relay-Modus Simulation
+RELAY_MODE = True             # True = Relay aktiviert (wie E90 RLYON)
+RELAY_ADDRESS = 1000          # Eigene Gateway-Adresse (wie E90 addr)
+RELAY_NETWORK_ID = 18         # Network ID (wie E90 netid)
+RELAY_FIXED_POINT = True      # True = nur relaying wenn dest ≠ self (empfohlen)
+RELAY_MAX_CACHE_SIZE = 1000   # Max Anzahl gespeicherter Packet-Hashes
+RELAY_CACHE_TTL = 300         # Packet-Hash-Cache TTL in Sekunden
+
 # Topics werden basierend auf Format gesetzt
 if TOPIC_FORMAT == "dragino":
     TOPIC_UP = f"{CLIENT_ID}/{CHANNEL_ID}/data"
@@ -59,10 +67,79 @@ else:  # chirpstack
     TOPIC_DOWN = f"gateway/{gateway_id_lower}/command/down"
     TOPIC_SUB = f"gateway/{gateway_id_lower}/event/up"
 
+# Packet-Hash-Cache für Loop Prevention (wie E90-DTU)
+packet_cache = {}  # {packet_hash: timestamp}
+
+def cleanup_packet_cache():
+    """Entfernt alte Einträge aus dem Packet-Cache"""
+    current_time = time.time()
+    expired = [h for h, ts in packet_cache.items() if current_time - ts > RELAY_CACHE_TTL]
+    for h in expired:
+        del packet_cache[h]
+    if len(packet_cache) > RELAY_MAX_CACHE_SIZE:
+        # Entferne älteste Einträge
+        sorted_items = sorted(packet_cache.items(), key=lambda x: x[1])
+        for h, _ in sorted_items[:len(packet_cache) - RELAY_MAX_CACHE_SIZE]:
+            del packet_cache[h]
+
+def packet_hash(raw_lora):
+    """Berechnet Hash eines Packets für Loop-Detection"""
+    import hashlib
+    return hashlib.md5(raw_lora.encode() if isinstance(raw_lora, str) else raw_lora).hexdigest()
+
+def packet_seen_before(raw_lora):
+    """Prüft ob Packet bereits gesehen wurde (Loop Prevention)"""
+    if not RELAY_MODE:
+        return False
+
+    cleanup_packet_cache()
+    p_hash = packet_hash(raw_lora)
+
+    if p_hash in packet_cache:
+        return True
+
+    packet_cache[p_hash] = time.time()
+    return False
+
+def should_relay_packet(data, raw_lora):
+    """
+    E90-DTU Relay-Logik Simulation
+
+    Returns True wenn Packet weitergeleitet werden soll
+    """
+    if not RELAY_MODE:
+        # Relay deaktiviert - Immer senden (altes Verhalten)
+        return True
+
+    # Loop Prevention: Packet schon gesehen?
+    if packet_seen_before(raw_lora):
+        logging.info("🔁 Packet bereits gesehen - Loop verhindert")
+        return False
+
+    # Für E90-DTU-Simulation: Prüfe ob dest_addr == self
+    # In LoRaWAN ist die Adresse im phyPayload kodiert
+    # Für vereinfachte Version: Nutze RELAY_FIXED_POINT Flag
+
+    if RELAY_FIXED_POINT:
+        # Fixed-Point Mode: Nur relay wenn nicht für uns bestimmt
+        # Da wir die LoRaWAN-Adresse nicht einfach dekodieren können,
+        # nutzen wir eine heuristische Annahme:
+        # Wenn RSSI sehr stark (-40 dBm) → wahrscheinlich lokales Gerät → nicht relay
+        rssi_val = data.get("rssi", 0)
+        if isinstance(rssi_val, (int, float)) and rssi_val > -40:
+            logging.info(f"📍 Lokales Gerät (RSSI {rssi_val}) - Nicht relay")
+            return False
+
+    # Ansonsten: Relay erlaubt
+    return True
+
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
         logging.info(f"Verbunden mit Broker (Code {reason_code})")
         logging.info(f"Topic Format: {TOPIC_FORMAT}")
+        if RELAY_MODE:
+            logging.info(f"🔄 RELAY Mode: {'FIXED-POINT' if RELAY_FIXED_POINT else 'PROMISCUOUS'}")
+            logging.info(f"   Gateway Addr: {RELAY_ADDRESS} | Network ID: {RELAY_NETWORK_ID}")
         client.subscribe(TOPIC_SUB)
         logging.info(f"Abonniert: {TOPIC_SUB}")
     else:
@@ -150,12 +227,18 @@ def on_message(client, userdata, msg):
         logging.info(f"Topic: {msg.topic}")
         logging.info(f"RSSI: {rssi} | SNR: {snr}")
 
+        # E90-DTU Relay-Logik: Prüfe ob Packet weitergeleitet werden soll
+        if not should_relay_packet(data, raw_lora):
+            logging.info("❌ Packet nicht relay (Filter oder Loop)")
+            return
+
         # Baue Downlink basierend auf Format
         downlink = build_downlink(raw_lora)
 
         # Zurückschicken
         client.publish(TOPIC_DOWN, json.dumps(downlink))
-        logging.info(f"Echo gesendet auf {FREQ_HZ/1000000} MHz (Format: {TOPIC_FORMAT})")
+        logging.info(f"✅ Echo gesendet auf {FREQ_HZ/1000000} MHz (Format: {TOPIC_FORMAT})")
+        logging.info(f"   Relay-Cache: {len(packet_cache)} Pakete")
 
     except json.JSONDecodeError as e:
         logging.error(f"JSON Decode Fehler: {e}")
@@ -192,6 +275,16 @@ try:
     logging.info(f"  Frequenz:       {FREQ_HZ/1000000} MHz")
     logging.info(f"  Spreading Factor: SF7")
     logging.info(f"  Sendeleistung:  14 dBm")
+    logging.info("")
+    logging.info(f"E90-DTU Relay-Modus Simulation:")
+    if RELAY_MODE:
+        logging.info(f"  🔄 RELAY:       {'AKTIVIERT' if RELAY_MODE else 'DEAKTIVIERT'}")
+        logging.info(f"  📍 Mode:        {'FIXED-POINT (empfohlen)' if RELAY_FIXED_POINT else 'PROMISCUOUS'}")
+        logging.info(f"  🏠 Gateway Addr: {RELAY_ADDRESS}")
+        logging.info(f"  🌐 Network ID:  {RELAY_NETWORK_ID}")
+        logging.info(f"  🛡️  Loop Prevent: {RELAY_MAX_CACHE_SIZE} Pakete, {RELAY_CACHE_TTL}s TTL")
+    else:
+        logging.info(f"  🔄 RELAY:       DEAKTIVIERT (Alle Pakete werden echo)")
     logging.info("=" * 60)
 
     client.connect(BROKER, 1883, 60)
