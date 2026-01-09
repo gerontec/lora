@@ -38,6 +38,10 @@ BACKUP_DIR = '/home/user/lora/config_backups'
 
 # FINALE REPEATER-KONFIGURATION
 # Diese Config ist für jahrelangen autarken Betrieb optimiert
+#
+# ⚠️  WICHTIG: E90-DTU unterstützt AT+REMOLORA (Remote-Config via LoRa!)
+#    → Remote-Config wird durch RS485-Trennung minimiert
+#    → KEINE Verschlüsselung: Repeater muss alle Pakete weiterleiten!
 FINAL_CONFIG = {
     'addr': 65535,          # Broadcast - empfängt ALLE
     'netid': 18,            # Network ID (kompatibel mit E22)
@@ -52,7 +56,7 @@ FINAL_CONFIG = {
     'lbt': 'LBTOFF',        # LBT aus (Berg = wenig Traffic)
     'wor': 'WOROFF',        # Wake-on-Radio aus (Dauerbetrieb!)
     'wor_tim': '2000',      # Irrelevant bei WOROFF
-    'crypt': 0              # Keine Verschlüsselung
+    'crypt': 0              # Keine Verschlüsselung (Repeater-Kompatibilität!)
 }
 
 def print_banner():
@@ -81,6 +85,7 @@ def apply_final_config(ser, config):
     print("=" * 70)
 
     for key, value in config.items():
+        # RELAY-Funktion hervorheben
         prefix = "⭐⭐⭐" if key == 'relay' else "   "
         print(f"{prefix} {key:15} = {value}")
 
@@ -229,12 +234,16 @@ def create_backups(config):
     return backups
 
 def disable_remote_config():
-    """Deaktiviert Remote-Konfiguration durch physische Trennung"""
-    print("\n🔒 REMOTE-KONFIGURATION DEAKTIVIEREN")
+    """Deaktiviert Remote-Konfiguration durch RS485-Trennung"""
+    print("\n🔒 REMOTE-KONFIGURATION MINIMIEREN")
     print("=" * 70)
     print()
-    print("⚠️  WICHTIG: Um Lockout-Risiko zu eliminieren, muss")
-    print("   Remote-Konfiguration PERMANENT deaktiviert werden!")
+    print("⚠️  HINWEIS: E90-DTU kann remote konfiguriert werden:")
+    print("   1. RS485 (lokale Konfiguration)")
+    print("   2. AT+REMOLORA (Remote-Config via LoRa)")
+    print()
+    print("   Ohne Verschlüsselung (CRYPT=0) ist AT+REMOLORA theoretisch")
+    print("   möglich, aber RS485-Trennung minimiert das Risiko erheblich.")
     print()
     print("=" * 70)
     print("METHODE: RS485-Kabel physisch trennen")
@@ -248,14 +257,14 @@ def disable_remote_config():
     print("  5. Foto machen (Dokumentation!)")
     print()
     print("Ergebnis:")
-    print("  ✅ Keine Remote-Konfiguration mehr möglich")
-    print("  ✅ 100% Schutz gegen Lockout durch Fehlkonfiguration")
-    print("  ✅ Config bleibt permanent in EEPROM gespeichert")
+    print("  ✅ Keine lokale RS485-Konfiguration mehr möglich")
+    print("  ✅ Physischer Zugang erforderlich für Änderungen")
     print("  ✅ E90-DTU funktioniert weiterhin als Repeater")
+    print("  ⚠️  AT+REMOLORA theoretisch noch möglich (sehr unwahrscheinlich)")
     print()
-    print("Alternative (wenn Remote-Management benötigt):")
+    print("Alternative (wenn lokales Management benötigt):")
     print("  → RS485-Kabel durch Kippschalter (plombiert)")
-    print("  → Bei Wartung: Plombe brechen, Schalter AN, rekonfigurieren")
+    print("  → Bei Wartung: Plombe brechen, Schalter AN")
     print("  → Risiko: Siehe E90_LOCKOUT_PREVENTION.md")
     print()
     print("=" * 70)
@@ -264,14 +273,14 @@ def disable_remote_config():
     response = input("❓ Wirst du RS485-Kabel trennen? [yes/NO]: ")
 
     if response.lower() == 'yes':
-        print("\n✅ Bestätigt: RS485 wird getrennt")
-        print("   → Remote-Konfiguration DEAKTIVIERT")
-        print("   → Lockout-Risiko ELIMINIERT")
+        print("\n✅ Bestätigt: RS485-Kabel wird getrennt")
+        print("   → Lokale Konfiguration verhindert")
+        print("   → Remote-Konfiguration minimiert")
+        print("   → Physischer Zugang erforderlich für Änderungen")
         return True
     else:
         print("\n⚠️  WARNUNG: RS485 bleibt verbunden!")
-        print("   → Remote-Konfiguration AKTIV")
-        print("   → Lockout-Risiko bleibt bestehen!")
+        print("   → Lokale Konfiguration weiterhin möglich")
         print("   → Siehe E90_LOCKOUT_PREVENTION.md für sichere Nutzung")
         return False
 
@@ -391,34 +400,40 @@ def main():
             print("✅✅✅ E90-DTU IST BEREIT & GESICHERT! ✅✅✅")
             print("=" * 70)
             print()
-            print("🔒 Status: REMOTE-KONFIGURATION DEAKTIVIERT")
-            print("   → RS485-Kabel wird getrennt")
-            print("   → Lockout-Risiko ELIMINIERT")
+            print("🔒 REMOTE-CONFIG STATUS:")
+            print("   ✅ RS485-Trennung verhindert lokale Konfiguration")
+            print("   ⚠️  AT+REMOLORA (LoRa) theoretisch möglich (sehr unwahrscheinlich)")
+            print()
+            print("   → Physischer Zugang erforderlich für Änderungen")
+            print("   → Lockout-Risiko minimiert")
         else:
             print("✅ E90-DTU IST BEREIT FÜR BERG-DEPLOYMENT")
             print("=" * 70)
             print()
-            print("⚠️  Status: REMOTE-KONFIGURATION AKTIV")
-            print("   → RS485-Kabel bleibt verbunden")
-            print("   → Lockout-Risiko besteht!")
+            print("⚠️  REMOTE-CONFIG STATUS:")
+            print("   ⚠️  RS485 bleibt lokal zugänglich")
+            print("   ⚠️  AT+REMOLORA (LoRa) theoretisch möglich")
+            print()
+            print("   → Remote-Konfiguration weiterhin möglich (Risiko!)")
         print("=" * 70)
         print()
         print("Nächste Schritte:")
         print("  1. Backups auf 2 USB-Sticks kopieren")
         if rs485_disconnected:
-            print("  2. RS485-Kabel JETZT trennen")
+            print("  2. RS485-Kabel JETZT physisch trennen")
         else:
-            print("  2. (Optional) RS485-Kabel trennen für maximale Sicherheit")
+            print("  2. (Empfohlen) RS485-Kabel trennen für maximale Sicherheit")
         print("  3. Deployment-Checkliste durchgehen")
         print("  4. Berg-Installation durchführen")
         print()
         print(f"📄 Checkliste: {checklist}")
         print()
         if rs485_disconnected:
-            print("✅ WICHTIG: Nach RS485-Trennung keine Remote-Config mehr möglich!")
-            print("   → Änderungen nur mit physischem Zugang zum Device!")
+            print("✅ SICHERHEIT: RS485-Trennung aktiv!")
+            print("   → Lokale Konfiguration verhindert")
+            print("   → Änderungen nur mit physischem Zugang möglich!")
         else:
-            print("⚠️  WICHTIG: Remote-Konfiguration weiterhin möglich!")
+            print("⚠️  SICHERHEIT: RS485 weiterhin zugänglich!")
             print("   → Befolge E90_LOCKOUT_PREVENTION.md für sichere Nutzung!")
         print()
 

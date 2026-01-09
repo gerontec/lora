@@ -184,7 +184,7 @@ Beispiele:
                 'lbt': 'LBTOFF',            # LBT aus (Berg = wenig Traffic)
                 'wor': 'WOROFF',            # Wake-on-Radio aus (Dauerbetrieb)
                 'wor_tim': '2000',          # WOR Timing (irrelevant bei WOROFF)
-                'crypt': 0                  # Keine Verschlüsselung
+                'crypt': 0                  # Keine Verschlüsselung (Repeater-Kompatibilität)
             }
 
             print("\n📋 Parameter:")
