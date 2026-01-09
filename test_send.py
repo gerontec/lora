@@ -12,7 +12,7 @@ def main():
     args = parser.parse_args()
 
     print(f"Starting continuous transmission test on {args.port}")
-    print(f"Frequency: 868.125 MHz (Channel 18)")
+    print(f"Note: Using current E22 module configuration (check with ./e22.py)")
     print(f"Interval: {args.interval} seconds")
     print(f"Press Ctrl+C to stop\n")
 
