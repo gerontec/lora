@@ -3,6 +3,7 @@ import socket
 import time
 import logging
 import threading
+import sys
 from datetime import datetime
 
 # Configure logging
@@ -16,6 +17,7 @@ logging.basicConfig(
 TCP_IP = '192.168.4.101'  # Change this to your device's IP
 TCP_PORT = 8886
 BUFFER_SIZE = 240
+SOCKET_TIMEOUT = 10  # seconds - timeout for connection and recv operations
 
 def send_message(sock, message):
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -52,7 +54,24 @@ def receive_messages(sock):
 
 # Create a TCP socket
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    s.connect((TCP_IP, TCP_PORT))
+    # Set timeout to prevent indefinite blocking
+    s.settimeout(SOCKET_TIMEOUT)
+
+    try:
+        s.connect((TCP_IP, TCP_PORT))
+        logging.info(f"Connected to {TCP_IP}:{TCP_PORT}")
+    except socket.timeout:
+        logging.error(f"Connection timeout after {SOCKET_TIMEOUT}s")
+        print(f"Error: Cannot connect to {TCP_IP}:{TCP_PORT} - timeout")
+        sys.exit(1)
+    except ConnectionRefusedError:
+        logging.error(f"Connection refused to {TCP_IP}:{TCP_PORT}")
+        print(f"Error: Connection refused by {TCP_IP}:{TCP_PORT}")
+        sys.exit(1)
+    except Exception as e:
+        logging.error(f"Connection error: {e}")
+        print(f"Error: {e}")
+        sys.exit(1)
     
     # Start receiving messages in a separate thread
     receiver_thread = threading.Thread(target=receive_messages, args=(s,), daemon=True)

@@ -5,6 +5,7 @@ import argparse
 TCP_IP = '192.168.4.101'
 TCP_PORT = 8886
 BUFFER_SIZE = 1024
+SOCKET_TIMEOUT = 5  # seconds - prevents indefinite hanging
 
 def main():
     parser = argparse.ArgumentParser(description="Configure E90-DTU(xxxSLxx-ETH) via TCP.")
@@ -26,6 +27,8 @@ def main():
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Set timeout to prevent indefinite blocking
+            s.settimeout(SOCKET_TIMEOUT)
             s.connect((TCP_IP, TCP_PORT))
             print(f"Connected to {TCP_IP}:{TCP_PORT}")
 
@@ -51,6 +54,13 @@ def main():
                 for action in parser._actions[1:]:  # Skip the first action which is help
                     print(f"--{action.dest}: {action.help}")
 
+    except socket.timeout:
+        print(f"Error: Connection timeout ({SOCKET_TIMEOUT}s)")
+        print(f"Device at {TCP_IP}:{TCP_PORT} is not responding.")
+        print("\nTroubleshooting:")
+        print(f"  1. Check if device is reachable: ping {TCP_IP}")
+        print(f"  2. Verify port {TCP_PORT} is correct")
+        print(f"  3. Ensure device is powered on and connected to network")
     except ConnectionRefusedError:
         print(f"Connection to {TCP_IP}:{TCP_PORT} refused. Make sure the server is running.")
     except Exception as e:
