@@ -47,7 +47,7 @@ except ImportError:
     MQTT_AVAILABLE = False
 
 # Version
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # --- KONFIGURATION ---
 DRAGINO_HOST = "10.0.0.2"
@@ -61,7 +61,7 @@ FREQ_B = "867.3"  # E22 Channel 19 (Backup/Scan)
 # Platform: SX1302, Radio type: 1250 for SX1250 (dragino-27e318)
 RADIO_TYPE = 1250
 CLOCK_SOURCE = 0  # Radio A (Radio 0) as clock source
-CHANNEL_MODE = 1  # Same frequency for all channels
+CHANNEL_MODE = 0  # LoRaWAN-like mode (0) for correct frequency mapping
 
 # MQTT Konfiguration
 MQTT_BROKER = "localhost"
@@ -215,7 +215,7 @@ class DraginoMonitor:
         print(f"Dragino:   {DRAGINO_USER}@{DRAGINO_HOST}")
         print(f"Frequency: {FREQ_A} MHz (Channel 17) and {FREQ_B} MHz")
         print(f"Radio:     SX{RADIO_TYPE} (Clock source: {CLOCK_SOURCE})")
-        print(f"Mode:      {CHANNEL_MODE} (Same freq all channels)")
+        print(f"Mode:      {CHANNEL_MODE} ({'LoRaWAN-like' if CHANNEL_MODE == 0 else 'Same freq'})")
         print(f"MQTT:      {'Enabled' if self.use_mqtt else 'Disabled'}")
         if debug:
             print(f"Debug:     Enabled")
