@@ -40,6 +40,9 @@ try:
 except ImportError:
     MQTT_AVAILABLE = False
 
+# Version
+VERSION = "1.1.0"
+
 # --- KONFIGURATION ---
 DRAGINO_HOST = "10.0.0.2"
 DRAGINO_USER = "root"
@@ -201,7 +204,7 @@ class DraginoMonitor:
     def run(self):
         """Hauptloop: Verbindet zu Dragino und monitort Pakete"""
         print("=" * 60)
-        print("Remote LoRa Packet Monitor (E22 Default Config)")
+        print(f"Remote LoRa Packet Monitor v{VERSION} (E22 Default Config)")
         print("=" * 60)
         print(f"Dragino:   {DRAGINO_USER}@{DRAGINO_HOST}")
         print(f"Frequency: {FREQ_A} MHz (Channel 17) and {FREQ_B} MHz")
@@ -268,6 +271,11 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Remote LoRa packet monitor for Dragino Gateway (E22 Default Config)"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s v{VERSION}"
     )
     parser.add_argument(
         "--mqtt",
