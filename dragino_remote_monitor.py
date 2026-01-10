@@ -9,10 +9,11 @@ Angepasst für E22 Default-Konfiguration:
   - Address: 0xFFFF, Network: 0x00
   - Baud: 9600, Power: 22dBm
 
-Dragino Gateway Settings:
-  - Radio Type: 1257 (SX1257)
-  - Clock Source: 0 (Radio A)
-  - Channel Mode: 1 (Same freq all channels)
+Dragino Gateway Settings (dragino-27e318):
+  - Platform: SX1302
+  - Radio Type: 1250 (SX1250)
+  - Radio 0: 867.5 MHz (E22 Ch17 @ 867.1 via IF -400kHz)
+  - Clock Source: 0 (Radio 0)
 
 Vorteile:
   - Kein Speicherplatz auf Dragino benötigt
@@ -46,7 +47,7 @@ except ImportError:
     MQTT_AVAILABLE = False
 
 # Version
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # --- KONFIGURATION ---
 DRAGINO_HOST = "10.0.0.2"
@@ -57,9 +58,9 @@ FREQ_A = "867.1"  # E22 Channel 17 (Primary)
 FREQ_B = "867.3"  # E22 Channel 19 (Backup/Scan)
 
 # Dragino Gateway Configuration
-# Radio type: 1257 for SX1257 (typical for LG308/LPS8)
-RADIO_TYPE = 1257
-CLOCK_SOURCE = 0  # Radio A as clock source
+# Platform: SX1302, Radio type: 1250 for SX1250 (dragino-27e318)
+RADIO_TYPE = 1250
+CLOCK_SOURCE = 0  # Radio A (Radio 0) as clock source
 CHANNEL_MODE = 1  # Same frequency for all channels
 
 # MQTT Konfiguration
