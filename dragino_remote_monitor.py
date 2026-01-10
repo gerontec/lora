@@ -9,6 +9,12 @@ Angepasst für E22 Default-Konfiguration:
   - Address: 0xFFFF, Network: 0x00
   - Baud: 9600, Power: 22dBm
 
+Dragino Gateway Settings (dragino-27e318):
+  - Platform: SX1302
+  - Radio Type: 1250 (SX1250)
+  - Radio 0: 867.5 MHz (E22 Ch17 @ 867.1 via IF -400kHz)
+  - Clock Source: 0 (Radio 0)
+
 Vorteile:
   - Kein Speicherplatz auf Dragino benötigt
   - Python-Parsing auf leistungsfähigem Server
@@ -41,7 +47,7 @@ except ImportError:
     MQTT_AVAILABLE = False
 
 # Version
-VERSION = "1.1.0"
+VERSION = "1.4.0"
 
 # --- KONFIGURATION ---
 DRAGINO_HOST = "10.0.0.2"
@@ -51,11 +57,11 @@ DRAGINO_USER = "root"
 FREQ_A = "867.1"  # E22 Channel 17 (Primary)
 FREQ_B = "867.3"  # E22 Channel 19 (Backup/Scan)
 
-# E22 Air Rate 2.4k entspricht:
-# - Bandwidth: 125 kHz
-# - Spreading Factor: 9
-# - Coding Rate: 4/5
-BANDWIDTH_KHZ = 125  # E22 2.4k air rate → 125 kHz
+# Dragino Gateway Configuration
+# Platform: SX1302, Radio type: 1250 for SX1250 (dragino-27e318)
+RADIO_TYPE = 1250
+CLOCK_SOURCE = 0  # Radio A (Radio 0) as clock source
+CHANNEL_MODE = 0  # LoRaWAN-like mode (0) for correct frequency mapping
 
 # MQTT Konfiguration
 MQTT_BROKER = "localhost"
@@ -201,31 +207,34 @@ class DraginoMonitor:
         cmd = ["ssh", f"{DRAGINO_USER}@{DRAGINO_HOST}", "killall fwd 2>/dev/null; sleep 1"]
         subprocess.run(cmd, capture_output=True)
 
-    def run(self):
+    def run(self, debug=False):
         """Hauptloop: Verbindet zu Dragino und monitort Pakete"""
         print("=" * 60)
         print(f"Remote LoRa Packet Monitor v{VERSION} (E22 Default Config)")
         print("=" * 60)
         print(f"Dragino:   {DRAGINO_USER}@{DRAGINO_HOST}")
         print(f"Frequency: {FREQ_A} MHz (Channel 17) and {FREQ_B} MHz")
-        print(f"Bandwidth: {BANDWIDTH_KHZ} kHz (E22 Air Rate 2.4k)")
+        print(f"Radio:     SX{RADIO_TYPE} (Clock source: {CLOCK_SOURCE})")
+        print(f"Mode:      {CHANNEL_MODE} ({'LoRaWAN-like' if CHANNEL_MODE == 0 else 'Same freq'})")
         print(f"MQTT:      {'Enabled' if self.use_mqtt else 'Disabled'}")
+        if debug:
+            print(f"Debug:     Enabled")
         print("=" * 60)
         print()
 
         # Stoppe interferierende Services
         self.stop_dragino_services()
 
-        # SSH Kommando mit korrekter Bandwidth für E22 2.4k air rate
+        # SSH Kommando mit korrekten Parametern für Dragino Gateway
         cmd = [
             "ssh",
             f"{DRAGINO_USER}@{DRAGINO_HOST}",
-            f"test_loragw_hal_rx -r {BANDWIDTH_KHZ} -a {FREQ_A} -b {FREQ_B} -k 0"
+            f"test_loragw_hal_rx -r {RADIO_TYPE} -a {FREQ_A} -b {FREQ_B} -k {CLOCK_SOURCE} -m {CHANNEL_MODE}"
         ]
 
         try:
             print(f"🔌 Connecting via SSH to {DRAGINO_HOST}...")
-            print(f"   Command: test_loragw_hal_rx -r {BANDWIDTH_KHZ} -a {FREQ_A} -b {FREQ_B} -k 0")
+            print(f"   Command: test_loragw_hal_rx -r {RADIO_TYPE} -a {FREQ_A} -b {FREQ_B} -k {CLOCK_SOURCE} -m {CHANNEL_MODE}")
 
             # Starte SSH Prozess
             process = subprocess.Popen(
@@ -241,14 +250,34 @@ class DraginoMonitor:
             print("   Press Ctrl+C to stop")
             print()
 
+            line_count = 0
             # Lese Zeile für Zeile
             for line in process.stdout:
                 line = line.strip()
+                line_count += 1
+
+                # Im Debug-Modus alle Zeilen anzeigen
+                if debug:
+                    print(f"[DEBUG {line_count}] {line}")
 
                 if "Waiting for packets" in line:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Gateway ready\n")
 
+                # Zeige Fehler und Warnungen immer an
+                if any(keyword in line.lower() for keyword in ['error', 'fail', 'warning', 'invalid', 'usage:']):
+                    print(f"⚠️  {line}")
+
                 self.parse_line(line)
+
+            # Warte auf Prozessende und zeige Exit-Code
+            exit_code = process.wait()
+            if exit_code != 0:
+                print(f"\n⚠️  Process exited with code {exit_code}")
+                if line_count == 0:
+                    print("   No output received - possible parameter error")
+                    print("\n   Try running manually on Dragino:")
+                    print(f"   ssh root@{DRAGINO_HOST}")
+                    print(f"   test_loragw_hal_rx -r {RADIO_TYPE} -a {FREQ_A} -b {FREQ_B} -k {CLOCK_SOURCE} -m {CHANNEL_MODE}")
 
         except KeyboardInterrupt:
             print("\n\n⏹️  Monitor stopped by user")
@@ -292,6 +321,11 @@ def main():
         default=MQTT_TOPIC,
         help=f"MQTT topic (default: {MQTT_TOPIC})"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output (show all lines from Dragino)"
+    )
 
     args = parser.parse_args()
 
@@ -301,7 +335,7 @@ def main():
 
     # Starte Monitor
     monitor = DraginoMonitor(use_mqtt=args.mqtt)
-    monitor.run()
+    monitor.run(debug=args.debug)
 
 
 if __name__ == "__main__":
