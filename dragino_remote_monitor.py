@@ -9,6 +9,11 @@ Angepasst für E22 Default-Konfiguration:
   - Address: 0xFFFF, Network: 0x00
   - Baud: 9600, Power: 22dBm
 
+Dragino Gateway Settings:
+  - Radio Type: 1257 (SX1257)
+  - Clock Source: 0 (Radio A)
+  - Channel Mode: 1 (Same freq all channels)
+
 Vorteile:
   - Kein Speicherplatz auf Dragino benötigt
   - Python-Parsing auf leistungsfähigem Server
@@ -41,7 +46,7 @@ except ImportError:
     MQTT_AVAILABLE = False
 
 # Version
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # --- KONFIGURATION ---
 DRAGINO_HOST = "10.0.0.2"
@@ -51,11 +56,11 @@ DRAGINO_USER = "root"
 FREQ_A = "867.1"  # E22 Channel 17 (Primary)
 FREQ_B = "867.3"  # E22 Channel 19 (Backup/Scan)
 
-# E22 Air Rate 2.4k entspricht:
-# - Bandwidth: 125 kHz
-# - Spreading Factor: 9
-# - Coding Rate: 4/5
-BANDWIDTH_KHZ = 125  # E22 2.4k air rate → 125 kHz
+# Dragino Gateway Configuration
+# Radio type: 1257 for SX1257 (typical for LG308/LPS8)
+RADIO_TYPE = 1257
+CLOCK_SOURCE = 0  # Radio A as clock source
+CHANNEL_MODE = 1  # Same frequency for all channels
 
 # MQTT Konfiguration
 MQTT_BROKER = "localhost"
@@ -208,7 +213,8 @@ class DraginoMonitor:
         print("=" * 60)
         print(f"Dragino:   {DRAGINO_USER}@{DRAGINO_HOST}")
         print(f"Frequency: {FREQ_A} MHz (Channel 17) and {FREQ_B} MHz")
-        print(f"Bandwidth: {BANDWIDTH_KHZ} kHz (E22 Air Rate 2.4k)")
+        print(f"Radio:     SX{RADIO_TYPE} (Clock source: {CLOCK_SOURCE})")
+        print(f"Mode:      {CHANNEL_MODE} (Same freq all channels)")
         print(f"MQTT:      {'Enabled' if self.use_mqtt else 'Disabled'}")
         if debug:
             print(f"Debug:     Enabled")
@@ -218,16 +224,16 @@ class DraginoMonitor:
         # Stoppe interferierende Services
         self.stop_dragino_services()
 
-        # SSH Kommando mit korrekter Bandwidth für E22 2.4k air rate
+        # SSH Kommando mit korrekten Parametern für Dragino Gateway
         cmd = [
             "ssh",
             f"{DRAGINO_USER}@{DRAGINO_HOST}",
-            f"test_loragw_hal_rx -r {BANDWIDTH_KHZ} -a {FREQ_A} -b {FREQ_B} -k 0"
+            f"test_loragw_hal_rx -r {RADIO_TYPE} -a {FREQ_A} -b {FREQ_B} -k {CLOCK_SOURCE} -m {CHANNEL_MODE}"
         ]
 
         try:
             print(f"🔌 Connecting via SSH to {DRAGINO_HOST}...")
-            print(f"   Command: test_loragw_hal_rx -r {BANDWIDTH_KHZ} -a {FREQ_A} -b {FREQ_B} -k 0")
+            print(f"   Command: test_loragw_hal_rx -r {RADIO_TYPE} -a {FREQ_A} -b {FREQ_B} -k {CLOCK_SOURCE} -m {CHANNEL_MODE}")
 
             # Starte SSH Prozess
             process = subprocess.Popen(
@@ -270,7 +276,7 @@ class DraginoMonitor:
                     print("   No output received - possible parameter error")
                     print("\n   Try running manually on Dragino:")
                     print(f"   ssh root@{DRAGINO_HOST}")
-                    print(f"   test_loragw_hal_rx -r {BANDWIDTH_KHZ} -a {FREQ_A} -b {FREQ_B} -k 0")
+                    print(f"   test_loragw_hal_rx -r {RADIO_TYPE} -a {FREQ_A} -b {FREQ_B} -k {CLOCK_SOURCE} -m {CHANNEL_MODE}")
 
         except KeyboardInterrupt:
             print("\n\n⏹️  Monitor stopped by user")
