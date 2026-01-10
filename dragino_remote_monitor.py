@@ -201,7 +201,7 @@ class DraginoMonitor:
         cmd = ["ssh", f"{DRAGINO_USER}@{DRAGINO_HOST}", "killall fwd 2>/dev/null; sleep 1"]
         subprocess.run(cmd, capture_output=True)
 
-    def run(self):
+    def run(self, debug=False):
         """Hauptloop: Verbindet zu Dragino und monitort Pakete"""
         print("=" * 60)
         print(f"Remote LoRa Packet Monitor v{VERSION} (E22 Default Config)")
@@ -210,6 +210,8 @@ class DraginoMonitor:
         print(f"Frequency: {FREQ_A} MHz (Channel 17) and {FREQ_B} MHz")
         print(f"Bandwidth: {BANDWIDTH_KHZ} kHz (E22 Air Rate 2.4k)")
         print(f"MQTT:      {'Enabled' if self.use_mqtt else 'Disabled'}")
+        if debug:
+            print(f"Debug:     Enabled")
         print("=" * 60)
         print()
 
@@ -241,14 +243,34 @@ class DraginoMonitor:
             print("   Press Ctrl+C to stop")
             print()
 
+            line_count = 0
             # Lese Zeile für Zeile
             for line in process.stdout:
                 line = line.strip()
+                line_count += 1
+
+                # Im Debug-Modus alle Zeilen anzeigen
+                if debug:
+                    print(f"[DEBUG {line_count}] {line}")
 
                 if "Waiting for packets" in line:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Gateway ready\n")
 
+                # Zeige Fehler und Warnungen immer an
+                if any(keyword in line.lower() for keyword in ['error', 'fail', 'warning', 'invalid', 'usage:']):
+                    print(f"⚠️  {line}")
+
                 self.parse_line(line)
+
+            # Warte auf Prozessende und zeige Exit-Code
+            exit_code = process.wait()
+            if exit_code != 0:
+                print(f"\n⚠️  Process exited with code {exit_code}")
+                if line_count == 0:
+                    print("   No output received - possible parameter error")
+                    print("\n   Try running manually on Dragino:")
+                    print(f"   ssh root@{DRAGINO_HOST}")
+                    print(f"   test_loragw_hal_rx -r {BANDWIDTH_KHZ} -a {FREQ_A} -b {FREQ_B} -k 0")
 
         except KeyboardInterrupt:
             print("\n\n⏹️  Monitor stopped by user")
@@ -292,6 +314,11 @@ def main():
         default=MQTT_TOPIC,
         help=f"MQTT topic (default: {MQTT_TOPIC})"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output (show all lines from Dragino)"
+    )
 
     args = parser.parse_args()
 
@@ -301,7 +328,7 @@ def main():
 
     # Starte Monitor
     monitor = DraginoMonitor(use_mqtt=args.mqtt)
-    monitor.run()
+    monitor.run(debug=args.debug)
 
 
 if __name__ == "__main__":
