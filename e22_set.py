@@ -39,11 +39,12 @@ def main():
     args = parser.parse_args()
 
     ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=1)
-    
-    # Set parameters on the E22 module
-    set_parameters(ser, args)
-    
-    ser.close()
+
+    try:
+        # Set parameters on the E22 module
+        set_parameters(ser, args)
+    finally:
+        ser.close()
 
 if __name__ == "__main__":
     main()
