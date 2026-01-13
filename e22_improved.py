@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 """
-Improved E22 LoRa Module Configuration Tool
-Includes proper version information handling and class-based architecture
+E22 LoRa Module Configuration Tool
+Based on official Ebyte E22 documentation (1:1 register mapping)
+Supports E22-400 (433MHz), E22-900 (868/915MHz) series
 """
 import serial
 import time
@@ -14,20 +15,66 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 
 
 class E22Module:
-    """Class to handle E22 LoRa module communication and configuration"""
+    """Class to handle E22 LoRa module communication and configuration
 
-    def __init__(self, port, baudrate=9600, timeout=1):
+    Register mapping according to official Ebyte documentation:
+    - 00H: ADDH (Address High Byte)
+    - 01H: ADDL (Address Low Byte)
+    - 02H: NETID (Network ID)
+    - 03H: REG0 (UART baud rate, parity, air rate)
+    - 04H: REG1 (Sub-packet, RSSI ambient noise, transmit power)
+    - 05H: REG2 (Channel Control)
+    - 06H: REG3 (RSSI byte, transfer method, relay, LBT, WOR)
+    - 07H: CRYPT_H (Key high byte, write only)
+    - 08H: CRYPT_L (Key low byte, write only)
+    - 80H-86H: PIDs (Product information 7 bytes)
+    """
+
+    # Official register mappings from Ebyte documentation
+    BAUD_RATES = {
+        0: "1200", 1: "2400", 2: "4800", 3: "9600",
+        4: "19200", 5: "38400", 6: "57600", 7: "115200"
+    }
+
+    PARITY_MODES = {
+        0: "8N1", 1: "8O1", 2: "8E1", 3: "8N1"  # 3 is equivalent to 0
+    }
+
+    # Note: First 3 air rates (0,1,2) are all 2.4k according to official docs
+    AIR_RATES = {
+        0: "2.4k", 1: "2.4k", 2: "2.4k", 3: "4.8k",
+        4: "9.6k", 5: "19.2k", 6: "38.4k", 7: "62.5k"
+    }
+
+    SUB_PACKET_SIZES = {
+        0: "240", 1: "128", 2: "64", 3: "32"
+    }
+
+    # Power levels differ by module series
+    # E22-900 series (868/915 MHz): 33/30/27/24 dBm
+    # E22-400 series (433 MHz): varies by model
+    POWER_LEVELS_900 = {
+        0: "33dBm", 1: "30dBm", 2: "27dBm", 3: "24dBm"
+    }
+
+    POWER_LEVELS_400 = {
+        0: "22dBm", 1: "17dBm", 2: "13dBm", 3: "10dBm"
+    }
+
+    def __init__(self, port, baudrate=9600, timeout=1, module_type="auto"):
         """Initialize the E22 module connection
 
         Args:
             port: Serial port path (e.g., /dev/ttyUSB0)
             baudrate: Baud rate for serial communication
             timeout: Serial timeout in seconds
+            module_type: "400" for E22-400 series, "900" for E22-900 series, "auto" for autodetect
         """
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
         self.ser = None
+        self.module_type = module_type
 
     def __enter__(self):
         """Context manager entry"""
@@ -66,7 +113,10 @@ class E22Module:
         return response
 
     def read_config(self):
-        """Read current module configuration
+        """Read current module configuration (9 bytes from address 00H)
+
+        Command: C1 00 09
+        Response: C1 00 09 + 9 bytes of configuration
 
         Returns:
             9 bytes of configuration data
@@ -74,11 +124,16 @@ class E22Module:
         command = bytes([0xC1, 0x00, 0x09])
         response = self.send_command(command)
         if len(response) < 12:
-            raise ValueError(f"Unexpected response length or format: {response.hex()}")
+            raise ValueError(f"Unexpected response length: {len(response)} bytes (expected >= 12). Response: {response.hex()}")
+        if response[0:3] != bytes([0xC1, 0x00, 0x09]):
+            raise ValueError(f"Unexpected response header: {response[0:3].hex()} (expected C10009)")
         return response[3:12]  # Return 9 bytes of configuration data
 
     def write_config(self, config):
-        """Write configuration to module
+        """Write configuration to module (C0 command)
+
+        Command: C0 00 09 + 9 bytes
+        Response: C1 00 09 + 9 bytes
 
         Args:
             config: List of 9 configuration bytes
@@ -86,26 +141,32 @@ class E22Module:
         Returns:
             9 bytes of confirmed configuration
         """
+        if len(config) != 9:
+            raise ValueError(f"Configuration must be exactly 9 bytes, got {len(config)}")
+
         command = bytes([0xC0, 0x00, 0x09] + config)
         response = self.send_command(command)
         if response[0:3] != bytes([0xC1, 0x00, 0x09]):
-            raise ValueError(f"Failed to write configuration: {response.hex()}")
+            raise ValueError(f"Failed to write configuration. Response: {response.hex()}")
         return response[3:12]
 
     def write_encryption_keys(self, key_high, key_low):
-        """Write encryption keys to module
+        """Write encryption keys to module (addresses 07H and 08H)
 
         Args:
-            key_high: High byte of encryption key
-            key_low: Low byte of encryption key
+            key_high: High byte of encryption key (CRYPT_H)
+            key_low: Low byte of encryption key (CRYPT_L)
         """
-        command = bytes([0xC0, 0x00, 0x02, key_high, key_low])
+        command = bytes([0xC0, 0x07, 0x02, key_high, key_low])
         response = self.send_command(command)
-        if response[0:3] != bytes([0xC1, 0x00, 0x02]):
-            raise ValueError(f"Failed to write encryption keys: {response.hex()}")
+        if response[0:3] != bytes([0xC1, 0x07, 0x02]):
+            raise ValueError(f"Failed to write encryption keys. Response: {response.hex()}")
 
     def read_product_info(self):
-        """Read product information from module
+        """Read product information (PIDs) from module
+
+        Command: C1 80 07
+        Response: C1 80 07 + 7 bytes of product info
 
         Returns:
             7 bytes of product information
@@ -113,27 +174,28 @@ class E22Module:
         command = bytes([0xC1, 0x80, 0x07])
         response = self.send_command(command)
         if len(response) < 10:
-            raise ValueError(f"Unexpected response length or format for product info: {response.hex()}")
+            raise ValueError(f"Unexpected product info response length: {len(response)} bytes. Response: {response.hex()}")
         return response[3:10]  # Return 7 bytes of product information
 
     def get_version(self):
         """Get firmware version information from module
 
-        The version command (0xC3, 0xC3, 0xC3) typically returns 3-4 bytes:
-        - Byte 0: Model
-        - Byte 1: Version
-        - Byte 2: Features
-        - Byte 3: (optional) Additional info
+        The C3 C3 C3 command is not documented in official Ebyte docs.
+        Some modules support it, returning 3-4 bytes, others don't.
 
         Returns:
-            Dictionary with version information
+            Dictionary with version information, or None if not supported
         """
         command = bytes([0xC3, 0xC3, 0xC3])
         response = self.send_command(command)
 
-        # Version response can be 3 or 4 bytes
+        # Check if module supports version command
         if len(response) < 3:
-            raise ValueError(f"Invalid version response length: {len(response)}. Expected at least 3 bytes, got {response.hex()}")
+            return None
+
+        # Check if response is all zeros (unsupported)
+        if response[0:3] == bytes([0xC3, 0x00, 0x00]):
+            return None
 
         version_info = {
             'model': response[0] if len(response) > 0 else 0,
@@ -150,6 +212,11 @@ class E22Module:
     def read_rssi(self):
         """Read RSSI values from module
 
+        Command: C0 C1 C2 C3 00 02
+        Returns current ambient noise RSSI and last received RSSI
+
+        Formula: dBm = -(256 - RSSI)
+
         Returns:
             Dictionary with RSSI values in dBm
         """
@@ -164,17 +231,53 @@ class E22Module:
         current_noise_rssi = response[3]
         last_received_rssi = response[4]
 
-        current_noise_dbm = - (256 - current_noise_rssi)
-        last_received_dbm = - (256 - last_received_rssi)
+        # Apply formula from documentation: dBm = -(256 - RSSI)
+        current_noise_dbm = -(256 - current_noise_rssi)
+        last_received_dbm = -(256 - last_received_rssi)
 
         return {
-            "Current Noise RSSI": current_noise_dbm,
-            "Last Received RSSI": last_received_dbm
+            "current_noise_rssi": current_noise_dbm,
+            "last_received_rssi": last_received_dbm
         }
 
-    @staticmethod
-    def parse_config(config):
+    def detect_module_type(self, config):
+        """Detect module type based on configuration
+
+        Args:
+            config: 9-byte configuration
+
+        Returns:
+            "400" for E22-400 series, "900" for E22-900 series
+        """
+        if self.module_type != "auto":
+            return self.module_type
+
+        # Try to detect based on channel/frequency range
+        # E22-400: typically uses channels for 410-441 MHz
+        # E22-900: typically uses channels for 850-930 MHz
+        # This is a heuristic, may need adjustment
+        channel = config[5]  # REG2
+
+        # If channel > 30, likely 900MHz module (wider range)
+        # This is just a guess, user should specify with --model flag
+        if channel > 30:
+            return "900"
+        else:
+            return "400"
+
+    def parse_config(self, config):
         """Parse configuration bytes into readable format
+
+        According to official Ebyte E22 register mapping:
+        Byte 0: ADDH (00H)
+        Byte 1: ADDL (01H)
+        Byte 2: NETID (02H)
+        Byte 3: REG0 (03H) - bits 7-5: UART baud, 4-3: parity, 2-0: air rate
+        Byte 4: REG1 (04H) - bits 7-6: sub-packet, 5: RSSI ambient, 4-2: reserved, 1-0: power
+        Byte 5: REG2 (05H) - channel
+        Byte 6: REG3 (06H) - bits 7: RSSI byte, 6: transfer mode, 5: relay, 4: LBT, 3: WOR role, 2-0: WOR period
+        Byte 7: REG4 (07H) - reserved
+        Byte 8: REG5 (08H) - reserved
 
         Args:
             config: 9 bytes of configuration data
@@ -182,159 +285,204 @@ class E22Module:
         Returns:
             Dictionary with parsed configuration
         """
+        if len(config) != 9:
+            raise ValueError(f"Configuration must be 9 bytes, got {len(config)}")
+
         addh, addl, netid, reg0, reg1, reg2, reg3, reg4, reg5 = config
+
+        # Detect module type
+        detected_type = self.detect_module_type(config)
+        power_map = self.POWER_LEVELS_900 if detected_type == "900" else self.POWER_LEVELS_400
+
+        # Parse address
         address = (addh << 8) | addl
-        network_address = netid
-        channel = reg2
-        air_rate_code = reg0 & 0x07
-        air_rates = ["0.3k", "1.2k", "2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k"]
-        air_rate = air_rates[air_rate_code] if air_rate_code < len(air_rates) else "Unknown"
+
+        # Parse REG0 (03H)
         baud_rate_code = (reg0 >> 5) & 0x07
-        baud_rates = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"]
-        baud_rate = baud_rates[baud_rate_code] if baud_rate_code < len(baud_rates) else "Unknown"
         parity_code = (reg0 >> 3) & 0x03
-        parities = ["8N1", "8O1", "8E1", "8N1"]
-        parity = parities[parity_code]
+        air_rate_code = reg0 & 0x07
+
+        baud_rate = self.BAUD_RATES.get(baud_rate_code, f"Unknown({baud_rate_code})")
+        parity = self.PARITY_MODES.get(parity_code, f"Unknown({parity_code})")
+        air_rate = self.AIR_RATES.get(air_rate_code, f"Unknown({air_rate_code})")
+
+        # Parse REG1 (04H)
+        sub_packet_code = (reg1 >> 6) & 0x03
+        rssi_ambient_enable = bool(reg1 & 0x20)
         power_code = reg1 & 0x03
-        powers = ["13dBm", "18dBm", "22dBm", "27dBm"]
-        power = powers[power_code] if power_code < len(powers) else "Unknown"
-        fixed_transmission = "Fixed-point" if reg3 & 0x40 else "Transparent"
-        relay_function = "Enabled" if reg3 & 0x20 else "Disabled"
-        lbt_enable = "Enabled" if reg3 & 0x10 else "Disabled"
-        rssi_enable = "Enabled" if reg1 & 0x20 else "Disabled"
-        noise_enable = "Enabled" if reg3 & 0x80 else "Disabled"
+
+        sub_packet_size = self.SUB_PACKET_SIZES.get(sub_packet_code, f"Unknown({sub_packet_code})")
+        power = power_map.get(power_code, f"Unknown({power_code})")
+
+        # Parse REG2 (05H) - Channel
+        channel = reg2
+
+        # Calculate frequency based on module type
+        if detected_type == "900":
+            # E22-900 series: Frequency = 850.125 + CH * 1 MHz
+            frequency_mhz = 850.125 + channel
+        else:
+            # E22-400 series: Frequency = 410.125 + CH * 1 MHz (approximate)
+            frequency_mhz = 410.125 + channel
+
+        # Parse REG3 (06H)
+        rssi_byte_enable = bool(reg3 & 0x80)
+        fixed_transmission = bool(reg3 & 0x40)
+        relay_enable = bool(reg3 & 0x20)
+        lbt_enable = bool(reg3 & 0x10)
+        wor_transmitter = bool(reg3 & 0x08)
+        wor_period_code = reg3 & 0x07
+
+        # WOR period: T = (1 + WOR) * 500ms
+        wor_period_ms = (wor_period_code + 1) * 500
 
         return {
-            "Address": f"0x{address:04X}",
-            "Network Address": f"0x{network_address:02X}",
-            "Channel": channel,
-            "Air Rate": air_rate,
-            "Baud Rate": baud_rate,
-            "Parity": parity,
-            "Transmitting Power": power,
-            "Fixed Transmission": fixed_transmission,
-            "Relay Function": relay_function,
-            "LBT Enable": lbt_enable,
-            "RSSI Enable": rssi_enable,
-            "Noise Enable": noise_enable
+            "module_type": detected_type,
+            "address": address,
+            "address_hex": f"0x{address:04X}",
+            "network_id": netid,
+            "network_id_hex": f"0x{netid:02X}",
+            "channel": channel,
+            "frequency_mhz": frequency_mhz,
+            "uart_baud_rate": baud_rate,
+            "uart_parity": parity,
+            "air_rate": air_rate,
+            "sub_packet_size": sub_packet_size,
+            "rssi_ambient_enable": rssi_ambient_enable,
+            "transmit_power": power,
+            "rssi_byte_enable": rssi_byte_enable,
+            "transmission_mode": "fixed-point" if fixed_transmission else "transparent",
+            "relay_enable": relay_enable,
+            "lbt_enable": lbt_enable,
+            "wor_mode": "transmitter" if wor_transmitter else "receiver",
+            "wor_period_ms": wor_period_ms,
+            "raw_hex": config.hex(' ').upper()
         }
 
     @staticmethod
-    def create_config(address, network_address, channel, air_rate, baud_rate, parity,
-                     power, fixed_transmission, relay_function, lbt_enable, rssi_enable,
-                     noise_enable="0"):
+    def create_config(address, network_id, channel, air_rate, baud_rate, parity,
+                     power, sub_packet_size="240", rssi_ambient_enable=False,
+                     rssi_byte_enable=False, fixed_transmission=False,
+                     relay_enable=False, lbt_enable=False, wor_transmitter=False,
+                     wor_period_ms=500):
         """Create configuration bytes from parameters
+
+        All parameters according to official Ebyte E22 register specification
 
         Args:
             address: Module address (0-65535)
-            network_address: Network ID (0-255)
+            network_id: Network ID (0-255)
             channel: Channel number (0-83)
-            air_rate: Air data rate (e.g., "2.4k")
-            baud_rate: UART baud rate (e.g., "9600")
-            parity: Parity mode (e.g., "8N1")
-            power: Transmit power (e.g., "22dBm")
-            fixed_transmission: "1" for fixed-point, "0" for transparent
-            relay_function: "1" to enable relay, "0" to disable
-            lbt_enable: "1" to enable LBT, "0" to disable
-            rssi_enable: "1" to enable RSSI, "0" to disable
-            noise_enable: "1" to enable noise reading, "0" to disable
+            air_rate: Air data rate ("2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k")
+            baud_rate: UART baud rate ("1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200")
+            parity: Parity mode ("8N1", "8O1", "8E1")
+            power: Transmit power (e.g., "33dBm", "30dBm", "27dBm", "24dBm" for E22-900)
+            sub_packet_size: Sub-packet size ("240", "128", "64", "32")
+            rssi_ambient_enable: Enable RSSI ambient noise reading
+            rssi_byte_enable: Enable RSSI byte output with received data
+            fixed_transmission: True for fixed-point, False for transparent
+            relay_enable: Enable relay/repeater function
+            lbt_enable: Enable Listen Before Talk
+            wor_transmitter: True for WOR transmitter, False for WOR receiver
+            wor_period_ms: WOR period in ms (500, 1000, 1500, 2000, 2500, 3000, 3500, 4000)
 
         Returns:
             List of 9 configuration bytes
         """
+        # Byte 0-1: Address
         addh = (address >> 8) & 0xFF
         addl = address & 0xFF
-        netid = network_address
 
-        air_rates = {"0.3k": 0, "1.2k": 1, "2.4k": 2, "4.8k": 3, "9.6k": 4, "19.2k": 5, "38.4k": 6, "62.5k": 7}
-        baud_rates = {"1200": 0, "2400": 1, "4800": 2, "9600": 3, "19200": 4, "38400": 5, "57600": 6, "115200": 7}
-        parities = {"8N1": 0, "8O1": 1, "8E1": 2}
-        powers = {"13dBm": 0, "18dBm": 1, "22dBm": 2, "27dBm": 3}
+        # Byte 2: Network ID
+        netid = network_id & 0xFF
 
-        reg0 = (baud_rates[baud_rate] << 5) | (parities[parity] << 3) | air_rates[air_rate]
-        reg1 = 0xE0 | powers[power]
+        # REG0 (Byte 3): UART baud rate, parity, air rate
+        baud_codes = {"1200": 0, "2400": 1, "4800": 2, "9600": 3, "19200": 4, "38400": 5, "57600": 6, "115200": 7}
+        parity_codes = {"8N1": 0, "8O1": 1, "8E1": 2}
+        air_codes = {"2.4k": 2, "4.8k": 3, "9.6k": 4, "19.2k": 5, "38.4k": 6, "62.5k": 7}
 
-        if rssi_enable == "1":
+        baud_code = baud_codes.get(baud_rate, 3)  # Default 9600
+        parity_code = parity_codes.get(parity, 0)  # Default 8N1
+        air_code = air_codes.get(air_rate, 2)  # Default 2.4k
+
+        reg0 = (baud_code << 5) | (parity_code << 3) | air_code
+
+        # REG1 (Byte 4): Sub-packet, RSSI ambient, power
+        packet_codes = {"240": 0, "128": 1, "64": 2, "32": 3}
+        # Try to extract power code from power string (e.g., "33dBm" -> 0)
+        power_codes_900 = {"33dBm": 0, "30dBm": 1, "27dBm": 2, "24dBm": 3}
+        power_codes_400 = {"22dBm": 0, "17dBm": 1, "13dBm": 2, "10dBm": 3}
+
+        packet_code = packet_codes.get(sub_packet_size, 0)  # Default 240
+        power_code = power_codes_900.get(power, power_codes_400.get(power, 0))  # Try both
+
+        reg1 = (packet_code << 6) | power_code
+        if rssi_ambient_enable:
             reg1 |= 0x20
-        else:
-            reg1 &= ~0x20
 
-        reg2 = channel
-        reg3 = 0x80
+        # REG2 (Byte 5): Channel
+        reg2 = channel & 0xFF
 
-        if noise_enable == "1":
+        # REG3 (Byte 6): RSSI byte, transfer mode, relay, LBT, WOR
+        wor_codes = {500: 0, 1000: 1, 1500: 2, 2000: 3, 2500: 4, 3000: 5, 3500: 6, 4000: 7}
+        wor_code = wor_codes.get(wor_period_ms, 0)  # Default 500ms
+
+        reg3 = wor_code
+        if rssi_byte_enable:
             reg3 |= 0x80
-        else:
-            reg3 &= ~0x80
-
-        if fixed_transmission == "1":
+        if fixed_transmission:
             reg3 |= 0x40
-        else:
-            reg3 &= ~0x40
-
-        if relay_function == "1":
+        if relay_enable:
             reg3 |= 0x20
-        else:
-            reg3 &= ~0x20
-
-        if lbt_enable == "1":
+        if lbt_enable:
             reg3 |= 0x10
-        else:
-            reg3 &= ~0x10
+        if wor_transmitter:
+            reg3 |= 0x08
 
+        # REG4, REG5: Reserved (0)
         reg4 = 0
         reg5 = 0
 
         return [addh, addl, netid, reg0, reg1, reg2, reg3, reg4, reg5]
 
 
-def format_version_info(version_info):
-    """Format version information for display
-
-    Args:
-        version_info: Dictionary with version information
-
-    Returns:
-        Formatted string
-    """
-    lines = []
-    lines.append("E22 Module Version Information:")
-    lines.append(f"  Model:    0x{version_info['model']:02X}")
-    lines.append(f"  Version:  0x{version_info['version']:02X}")
-    lines.append(f"  Features: 0x{version_info['features']:02X}")
-    if 'extra' in version_info:
-        lines.append(f"  Extra:    0x{version_info['extra']:02X}")
-    lines.append(f"  Raw:      {version_info['raw']}")
-    return "\n".join(lines)
-
-
-def print_config(parsed_config, raw_config):
-    """Print module configuration
+def print_config(parsed_config):
+    """Print module configuration in readable format
 
     Args:
         parsed_config: Dictionary with parsed configuration
-        raw_config: Raw configuration bytes
     """
-    print("\nE22 Module Configuration:")
-    for key, value in parsed_config.items():
-        print(f"  {key}: {value}")
-    print(f"  Raw Config: {raw_config.hex(' ').upper()}")
-
-
-def print_product_info(product_info):
-    """Print product information
-
-    Args:
-        product_info: Raw product information bytes
-    """
-    print("\nProduct Information:")
-    print(f"  Raw Product Info: {product_info.hex(' ').upper()}")
+    print("\n" + "="*60)
+    print("E22 MODULE CONFIGURATION")
+    print("="*60)
+    print(f"Module Type:     E22-{parsed_config['module_type']} series")
+    print(f"Address:         {parsed_config['address_hex']} ({parsed_config['address']})")
+    print(f"Network ID:      {parsed_config['network_id_hex']} ({parsed_config['network_id']})")
+    print(f"Channel:         {parsed_config['channel']} ({parsed_config['frequency_mhz']:.3f} MHz)")
+    print("-"*60)
+    print(f"UART Baud:       {parsed_config['uart_baud_rate']} bps")
+    print(f"UART Parity:     {parsed_config['uart_parity']}")
+    print(f"Air Data Rate:   {parsed_config['air_rate']} bps")
+    print(f"Sub-Packet:      {parsed_config['sub_packet_size']} bytes")
+    print("-"*60)
+    print(f"TX Power:        {parsed_config['transmit_power']}")
+    print(f"RSSI Ambient:    {'Enabled' if parsed_config['rssi_ambient_enable'] else 'Disabled'}")
+    print(f"RSSI Byte:       {'Enabled' if parsed_config['rssi_byte_enable'] else 'Disabled'}")
+    print("-"*60)
+    print(f"Trans Mode:      {parsed_config['transmission_mode']}")
+    print(f"Relay/Repeater:  {'Enabled' if parsed_config['relay_enable'] else 'Disabled'}")
+    print(f"LBT:             {'Enabled' if parsed_config['lbt_enable'] else 'Disabled'}")
+    print(f"WOR Mode:        {parsed_config['wor_mode']}")
+    print(f"WOR Period:      {parsed_config['wor_period_ms']} ms")
+    print("-"*60)
+    print(f"Raw Config:      {parsed_config['raw_hex']}")
+    print("="*60)
 
 
 def main():
     """Main entry point for the E22 configuration tool"""
     parser = argparse.ArgumentParser(
-        description="Read/Write configuration for E22 LoRa module",
+        description="E22 LoRa Module Configuration Tool (Official Ebyte Register Mapping)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -347,42 +495,52 @@ Examples:
   # Set module address and channel
   %(prog)s --address 0x1234 --channel 21
 
-  # Configure all parameters
-  %(prog)s --address 0x1234 --network-address 0x00 --channel 21 \\
-           --air-rate 2.4k --baud-rate 9600 --parity 8N1 --power 22dBm \\
-           --fixed-transmission 1 --relay-function 0 --lbt-enable 0 \\
-           --rssi-enable 1
+  # Configure for E22-900 series
+  %(prog)s --model 900 --address 0x0001 --channel 18 --power 33dBm
+
+  # Configure for E22-400 series
+  %(prog)s --model 400 --address 0x0001 --channel 23 --power 22dBm
         """
     )
 
     parser.add_argument("--port", default="/dev/ttyUSB0",
                        help="Serial port (default: /dev/ttyUSB0)")
+    parser.add_argument("--model", choices=["400", "900", "auto"], default="auto",
+                       help="Module type: 400 for E22-400 (433MHz), 900 for E22-900 (868/915MHz), auto for autodetect")
     parser.add_argument("--version", action="store_true",
                        help="Display module firmware version and exit")
     parser.add_argument("--address", type=lambda x: int(x, 0),
-                       help="Set address (e.g., 0x1234)")
-    parser.add_argument("--network-address", type=lambda x: int(x, 0), default=None,
-                       help="Set network address (e.g., 0x00)")
+                       help="Set address (0-65535, e.g., 0x1234)")
+    parser.add_argument("--network-id", type=lambda x: int(x, 0),
+                       help="Set network ID (0-255, e.g., 0x00)")
     parser.add_argument("--channel", type=int,
                        help="Set channel (0-83)")
     parser.add_argument("--air-rate",
-                       choices=["0.3k", "1.2k", "2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k"],
-                       help="Set air rate")
+                       choices=["2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k"],
+                       help="Set air data rate")
     parser.add_argument("--baud-rate",
                        choices=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"],
-                       help="Set baud rate")
+                       help="Set UART baud rate")
     parser.add_argument("--parity", choices=["8N1", "8O1", "8E1"],
-                       help="Set parity")
-    parser.add_argument("--power", choices=["13dBm", "18dBm", "22dBm", "27dBm"],
-                       help="Set transmitting power")
+                       help="Set parity mode")
+    parser.add_argument("--power",
+                       help="Set transmit power (e.g., 33dBm, 30dBm, 27dBm, 24dBm for E22-900)")
+    parser.add_argument("--sub-packet", choices=["240", "128", "64", "32"],
+                       help="Set sub-packet size in bytes")
+    parser.add_argument("--rssi-ambient", choices=["0", "1"],
+                       help="Enable RSSI ambient noise (0: Disable, 1: Enable)")
+    parser.add_argument("--rssi-byte", choices=["0", "1"],
+                       help="Enable RSSI byte output (0: Disable, 1: Enable)")
     parser.add_argument("--fixed-transmission", choices=["0", "1"],
-                       help="Set fixed-point transmission (0: Transparent, 1: Fixed-point)")
-    parser.add_argument("--relay-function", choices=["0", "1"],
-                       help="Set relay function (0: Disable, 1: Enable)")
-    parser.add_argument("--lbt-enable", choices=["0", "1"],
-                       help="Set LBT enable (0: Disable, 1: Enable)")
-    parser.add_argument("--rssi-enable", choices=["0", "1"],
-                       help="Enable RSSI reading (0: Disable, 1: Enable)")
+                       help="Transmission mode (0: Transparent, 1: Fixed-point)")
+    parser.add_argument("--relay", choices=["0", "1"],
+                       help="Relay/repeater function (0: Disable, 1: Enable)")
+    parser.add_argument("--lbt", choices=["0", "1"],
+                       help="Listen Before Talk (0: Disable, 1: Enable)")
+    parser.add_argument("--wor-mode", choices=["0", "1"],
+                       help="WOR mode (0: Receiver, 1: Transmitter)")
+    parser.add_argument("--wor-period", type=int, choices=[500, 1000, 1500, 2000, 2500, 3000, 3500, 4000],
+                       help="WOR period in milliseconds")
     parser.add_argument("--write-key", nargs=2, type=lambda x: int(x, 16),
                        help="Write encryption key (high_byte low_byte in hex)")
     parser.add_argument("--read-product-info", action="store_true",
@@ -399,102 +557,106 @@ Examples:
         # Determine baud rate to use
         baud_rate_to_use = int(args.baud_rate) if args.baud_rate else 9600
 
-        with E22Module(args.port, baudrate=baud_rate_to_use, timeout=1) as e22:
+        with E22Module(args.port, baudrate=baud_rate_to_use, timeout=1, module_type=args.model) as e22:
+
             # Handle --version flag
             if args.version:
                 version_info = e22.get_version()
-                print(format_version_info(version_info))
+                if version_info:
+                    print("\nE22 Module Version Information:")
+                    print(f"  Model:    0x{version_info['model']:02X}")
+                    print(f"  Version:  0x{version_info['version']:02X}")
+                    print(f"  Features: 0x{version_info['features']:02X}")
+                    if 'extra' in version_info:
+                        print(f"  Extra:    0x{version_info['extra']:02X}")
+                    print(f"  Raw:      {version_info['raw']}")
+                else:
+                    print("\nNote: Version command (C3 C3 C3) not supported by this module.")
+                    print("This is normal for many E22 modules.")
                 return 0
 
             # Handle encryption key writing
             if args.write_key:
                 e22.write_encryption_keys(*args.write_key)
-                print(f"Encryption keys written: 0x{args.write_key[0]:02X} 0x{args.write_key[1]:02X}")
+                print(f"\nEncryption keys written: 0x{args.write_key[0]:02X} 0x{args.write_key[1]:02X}")
 
             # Handle product info reading
-            if args.read_product_info or not any([
-                args.address, args.network_address, args.channel, args.air_rate,
-                args.baud_rate, args.parity, args.power, args.fixed_transmission,
-                args.relay_function, args.lbt_enable, args.rssi_enable, args.write_key
-            ]):
+            if args.read_product_info:
                 product_info = e22.read_product_info()
-                print_product_info(product_info)
+                print("\nProduct Information (PIDs):")
+                print(f"  Raw: {product_info.hex(' ').upper()}")
 
             # Read current configuration
             current_config = e22.read_config()
-            parsed_config = E22Module.parse_config(current_config)
+            parsed_config = e22.parse_config(current_config)
 
-            # Handle configuration updates
-            if any([
-                args.address, args.network_address, args.channel, args.air_rate,
-                args.baud_rate, args.parity, args.power, args.fixed_transmission,
-                args.relay_function, args.lbt_enable, args.rssi_enable
-            ]):
-                # Update parsed config with new values
-                if args.address is not None:
-                    parsed_config['Address'] = f"0x{args.address:04X}"
-                if args.network_address is not None:
-                    parsed_config['Network Address'] = f"0x{args.network_address:02X}"
-                if args.channel is not None:
-                    parsed_config['Channel'] = args.channel
-                if args.air_rate is not None:
-                    parsed_config['Air Rate'] = args.air_rate
-                if args.baud_rate is not None:
-                    parsed_config['Baud Rate'] = args.baud_rate
-                if args.parity is not None:
-                    parsed_config['Parity'] = args.parity
-                if args.power is not None:
-                    parsed_config['Transmitting Power'] = args.power
-                if args.fixed_transmission is not None:
-                    parsed_config['Fixed Transmission'] = "Fixed-point" if args.fixed_transmission == "1" else "Transparent"
-                if args.relay_function is not None:
-                    parsed_config['Relay Function'] = "Enabled" if args.relay_function == "1" else "Disabled"
-                if args.lbt_enable is not None:
-                    parsed_config['LBT Enable'] = "Enabled" if args.lbt_enable == "1" else "Disabled"
-                if args.rssi_enable is not None:
-                    parsed_config['RSSI Enable'] = "Enabled" if args.rssi_enable == "1" else "Disabled"
+            # Check if any configuration changes requested
+            config_changed = any([
+                args.address, args.network_id, args.channel, args.air_rate,
+                args.baud_rate, args.parity, args.power, args.sub_packet,
+                args.rssi_ambient, args.rssi_byte, args.fixed_transmission,
+                args.relay, args.lbt, args.wor_mode, args.wor_period
+            ])
+
+            if config_changed:
+                # Prepare new configuration
+                new_address = args.address if args.address is not None else parsed_config['address']
+                new_network_id = args.network_id if args.network_id is not None else parsed_config['network_id']
+                new_channel = args.channel if args.channel is not None else parsed_config['channel']
+                new_air_rate = args.air_rate if args.air_rate else parsed_config['air_rate']
+                new_baud_rate = args.baud_rate if args.baud_rate else parsed_config['uart_baud_rate']
+                new_parity = args.parity if args.parity else parsed_config['uart_parity']
+                new_power = args.power if args.power else parsed_config['transmit_power']
+                new_sub_packet = args.sub_packet if args.sub_packet else parsed_config['sub_packet_size']
+                new_rssi_ambient = bool(int(args.rssi_ambient)) if args.rssi_ambient else parsed_config['rssi_ambient_enable']
+                new_rssi_byte = bool(int(args.rssi_byte)) if args.rssi_byte else parsed_config['rssi_byte_enable']
+                new_fixed = bool(int(args.fixed_transmission)) if args.fixed_transmission else (parsed_config['transmission_mode'] == 'fixed-point')
+                new_relay = bool(int(args.relay)) if args.relay else parsed_config['relay_enable']
+                new_lbt = bool(int(args.lbt)) if args.lbt else parsed_config['lbt_enable']
+                new_wor_tx = bool(int(args.wor_mode)) if args.wor_mode else (parsed_config['wor_mode'] == 'transmitter')
+                new_wor_period = args.wor_period if args.wor_period else parsed_config['wor_period_ms']
 
                 # Create new configuration
                 new_config = E22Module.create_config(
-                    int(parsed_config['Address'], 16),
-                    int(parsed_config['Network Address'], 16),
-                    parsed_config['Channel'],
-                    parsed_config['Air Rate'],
-                    parsed_config['Baud Rate'],
-                    parsed_config['Parity'],
-                    parsed_config['Transmitting Power'],
-                    "1" if parsed_config['Fixed Transmission'] == "Fixed-point" else "0",
-                    "1" if parsed_config['Relay Function'] == "Enabled" else "0",
-                    "1" if parsed_config['LBT Enable'] == "Enabled" else "0",
-                    "1" if parsed_config['RSSI Enable'] == "Enabled" else "0"
+                    address=new_address,
+                    network_id=new_network_id,
+                    channel=new_channel,
+                    air_rate=new_air_rate,
+                    baud_rate=new_baud_rate,
+                    parity=new_parity,
+                    power=new_power,
+                    sub_packet_size=new_sub_packet,
+                    rssi_ambient_enable=new_rssi_ambient,
+                    rssi_byte_enable=new_rssi_byte,
+                    fixed_transmission=new_fixed,
+                    relay_enable=new_relay,
+                    lbt_enable=new_lbt,
+                    wor_transmitter=new_wor_tx,
+                    wor_period_ms=new_wor_period
                 )
 
                 # Write configuration
                 e22.write_config(new_config)
-                print("Configuration updated successfully.")
+                print("\n✓ Configuration updated successfully")
 
-                # If baud rate was changed, reconnect with new baud rate
+                # If baud rate was changed, reconnect
                 if args.baud_rate:
                     e22.close()
                     time.sleep(0.5)
-                    baud_rate_to_use = int(args.baud_rate)
-                    e22.baudrate = baud_rate_to_use
+                    e22.baudrate = int(args.baud_rate)
                     e22.open()
 
                 # Re-read configuration to verify
                 current_config = e22.read_config()
-                parsed_config = E22Module.parse_config(current_config)
-            else:
-                if not args.write_key:
-                    print("No configuration arguments provided. Showing current configuration.")
+                parsed_config = e22.parse_config(current_config)
 
             # Print current configuration
-            print_config(parsed_config, current_config)
+            print_config(parsed_config)
 
             return 0
 
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"\nError: {e}", file=sys.stderr)
         if args.debug:
             import traceback
             traceback.print_exc()
