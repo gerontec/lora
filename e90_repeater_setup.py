@@ -74,7 +74,14 @@ def configure_repeater(ser, config):
     command = f"AT+LORA={','.join(params)}\r\n"
     response = send_at_command(ser, command, wait_time=1.5)
 
-    if "OK" in response or "SUCCESS" in response:
+    # `send_at_command` returns raw bytes. Decode safely for string checks.
+    resp_str = ''
+    if isinstance(response, (bytes, bytearray)):
+        resp_str = response.decode('utf-8', errors='ignore')
+    else:
+        resp_str = str(response)
+
+    if "OK" in resp_str or "SUCCESS" in resp_str:
         print("✅ Repeater-Konfiguration erfolgreich!")
         return True
     else:
