@@ -220,16 +220,33 @@ def main():
                 print(f"Resp: {resp.hex().upper()}")
                 return
 
-            # If user selected an E90 device, use AT commands for settings that
-            # E90 manages differently (power via PWMAX/PWMID etc.). Support
-            # direct requests for 30dBm/33dBm by mapping them to PWMAX.
+            # If user selected an E90 device, prefer raw vendor sequences when
+            # available (avoid AT) and fall back to AT if no mapping exists.
             if args.module == "E90" and args.power is not None:
-                # Map requested power to E90 tx_pow tokens
+                # If a raw sequence was supplied for this power level, send it.
+                if args.power in POWER_RAW_MAP:
+                    hexstr = POWER_RAW_MAP[args.power].replace(' ', '')
+                    try:
+                        payload = bytes.fromhex(hexstr)
+                    except ValueError:
+                        raise ValueError(f"Invalid raw hex for {args.power}: {hexstr}")
+                    logging.debug(f"Sending vendor raw power bytes for E90 {args.power}: {hexstr.lower()}")
+                    ser.write(payload)
+                    time.sleep(0.1)
+                    resp = ser.read(256)
+                    logging.debug(f"Received response: {resp.hex()}")
+                    print(f"Sent raw power sequence for {args.power} to E90")
+                    # Re-read config and exit
+                    current_config = read_config(ser)
+                    parsed_config = parse_config(current_config)
+                    return
+
+                # No raw mapping: fall back to AT command method for E90
                 p = args.power
                 if p in ("30dBm", "33dBm"):
                     tx_pow = "PWMAX"
                 else:
-                    raise ValueError("For E90 modules, only 30dBm/33dBm are supported via this helper; use e90_repeater_setup.py for full control.")
+                    raise ValueError("For E90 modules, unsupported power value; provide a raw hex mapping or use the E90 helper script.")
 
                 # Build AT+LORA parameter set using parsed values where sensible
                 addr = 65535
