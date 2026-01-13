@@ -238,31 +238,38 @@ class EbyteE22:
             if auto_detect:
                 try:
                     version_info = self.get_version()
-                    freq = version_info.get('frequency', 'Unknown')
 
-                    if self.debug:
-                        print(f"✓ Detected module frequency: {freq}")
+                    # Only update model if we got valid frequency info
+                    if version_info.get('supported', False):
+                        freq = version_info.get('frequency', 'Unknown')
 
-                    # Update model in config based on detected frequency
-                    if '400' in freq or '433' in freq or '470' in freq:
-                        # It's a 400MHz variant
-                        if 'T30' in self.model.upper():
-                            self.config['model'] = f"400T30S"
-                        elif 'T27' in self.model.upper():
-                            self.config['model'] = f"400T27S"
-                        else:
-                            self.config['model'] = f"400T22S"
-                    elif '868' in freq or '915' in freq or '900' in freq:
-                        # It's a 900MHz variant
-                        if 'T30' in self.model.upper():
-                            self.config['model'] = f"900T30S"
-                        elif 'T27' in self.model.upper():
-                            self.config['model'] = f"900T27S"
-                        else:
-                            self.config['model'] = f"900T22D"
+                        if self.debug:
+                            print(f"✓ Detected module frequency: {freq}")
 
-                    if self.debug:
-                        print(f"✓ Updated model to: {self.config['model']}")
+                        # Update model in config based on detected frequency
+                        if '400' in freq or '433' in freq or '470' in freq:
+                            # It's a 400MHz variant
+                            if 'T30' in self.model.upper():
+                                self.config['model'] = f"400T30S"
+                            elif 'T27' in self.model.upper():
+                                self.config['model'] = f"400T27S"
+                            else:
+                                self.config['model'] = f"400T22S"
+                        elif '868' in freq or '915' in freq or '900' in freq:
+                            # It's a 900MHz variant
+                            if 'T30' in self.model.upper():
+                                self.config['model'] = f"900T30S"
+                            elif 'T27' in self.model.upper():
+                                self.config['model'] = f"900T27S"
+                            else:
+                                self.config['model'] = f"900T22D"
+
+                        if self.debug:
+                            print(f"✓ Updated model to: {self.config['model']}")
+                    else:
+                        if self.debug:
+                            print(f"⚠ Auto-detection not supported by this module")
+                            print(f"  Using configured model: {self.config['model']}")
 
                 except Exception as e:
                     if self.debug:
@@ -446,18 +453,32 @@ class EbyteE22:
 
         Returns:
             Dictionary with model, version, and frequency info
+            Returns None values if module doesn't support version command
         """
         command = bytes([self.CMDS['getVersion'], 0x00, 0x00])
         response = self._send_command(command, wait_time=0.2)
 
-        if len(response) < 4:
-            raise ValueError(f"Invalid version response length: {len(response)}")
+        if len(response) < 3:
+            if self.debug:
+                print(f"⚠ Version command not supported or module not responding")
+                print(f"  Response: {response.hex(' ').upper() if response else 'empty'}")
+            # Return empty version info
+            return {
+                'header': None,
+                'model': None,
+                'version': None,
+                'features': None,
+                'frequency': 'Unknown',
+                'supported': False
+            }
 
+        # Some E22 modules don't fully support getVersion command
         version_info = {
-            'header': response[0],
-            'model': response[1],
-            'version': response[2],
-            'features': response[3]
+            'header': response[0] if len(response) > 0 else None,
+            'model': response[1] if len(response) > 1 else None,
+            'version': response[2] if len(response) > 2 else None,
+            'features': response[3] if len(response) > 3 else None,
+            'supported': len(response) >= 4
         }
 
         # Decode frequency from byte 4
@@ -475,7 +496,11 @@ class EbyteE22:
             version_info['frequency'] = 'Unknown'
 
         if self.debug:
-            print(f"Module Version: {version_info}")
+            if version_info['supported']:
+                print(f"Module Version: {version_info}")
+            else:
+                print(f"⚠ Version command partially supported or not available")
+                print(f"  Raw response ({len(response)} bytes): {response.hex(' ').upper()}")
 
         return version_info
 
@@ -612,11 +637,27 @@ def main():
             print('=' * 60)
             print('E22 MODULE VERSION INFO')
             print('=' * 60)
-            print(f"Header:      0x{version_info['header']:02X}")
-            print(f"Model:       0x{version_info['model']:02X}")
-            print(f"Version:     0x{version_info['version']:02X}")
-            print(f"Features:    0x{version_info['features']:02X}")
-            print(f"Frequency:   {version_info.get('frequency', 'Unknown')}")
+
+            if version_info.get('supported', False):
+                print(f"Header:      0x{version_info['header']:02X}")
+                print(f"Model:       0x{version_info['model']:02X}")
+                print(f"Version:     0x{version_info['version']:02X}")
+                print(f"Features:    0x{version_info['features']:02X}")
+                print(f"Frequency:   {version_info.get('frequency', 'Unknown')}")
+            else:
+                print("⚠ Version command not fully supported by this module")
+                print()
+                print("Partial response received:")
+                if version_info['header'] is not None:
+                    print(f"  Header:    0x{version_info['header']:02X}")
+                if version_info['model'] is not None:
+                    print(f"  Model:     0x{version_info['model']:02X}")
+                if version_info['version'] is not None:
+                    print(f"  Version:   0x{version_info['version']:02X}")
+                print()
+                print("Recommendation: Use --model parameter to specify model manually")
+                print("Example: --model 400T30S or --model 900T22D")
+
             print('=' * 60)
 
         if args.read:
