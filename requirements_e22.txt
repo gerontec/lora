@@ -1,0 +1,5 @@
+# Requirements for e22_improved.py
+#
+# Install with: pip install -r requirements_e22.txt
+
+pyserial>=3.5
