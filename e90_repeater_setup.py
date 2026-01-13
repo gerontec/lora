@@ -27,13 +27,23 @@ def send_at_command(ser, command, wait_time=0.5):
     time.sleep(wait_time)
 
     response = b''
+    # Read any available bytes after waiting
     while ser.in_waiting > 0:
         response += ser.read(ser.in_waiting)
-        time.sleep(0.1)
+        time.sleep(0.05)
 
-    response_str = response.decode('utf-8', errors='ignore').strip()
-    print(f"← Empfangen: {response_str}")
-    return response_str
+    # Print both raw hex and decoded string for debugging
+    if response:
+        try:
+            response_str = response.decode('utf-8', errors='ignore').strip()
+        except Exception:
+            response_str = ''
+        print(f"← Empfangen (raw hex): {response.hex().upper()}")
+        print(f"← Empfangen (decoded): {response_str}")
+    else:
+        print("← Empfangen: <no response>")
+
+    return response
 
 def configure_repeater(ser, config):
     """Konfiguriert E90-DTU als LoRa-Repeater mit RELAY-Funktion"""
@@ -129,6 +139,7 @@ Beispiele:
     parser.add_argument('--tx-pow', default='PWMAX',
                        choices=['PWMIN', 'PWLOW', 'PWMID', 'PWMAX'],
                        help='TX Power (PWMAX empfohlen für Berg)')
+    parser.add_argument('--lbt', default='LBTOFF', choices=['LBTOFF', 'LBTON'], help='Listen Before Talk (LBTOFF or LBTON)')
 
     args = parser.parse_args()
 
@@ -182,6 +193,7 @@ Beispiele:
                 'tr_mod': 'TRNOR',          # Transparent Mode
                 'relay': 'RLYON',           # ⭐⭐⭐ RELAY AKTIVIERT ⭐⭐⭐
                 'lbt': 'LBTOFF',            # LBT aus (Berg = wenig Traffic)
+                    'lbt': args.lbt,            # LBT (LBTON/LBTOFF)
                 'wor': 'WOROFF',            # Wake-on-Radio aus (Dauerbetrieb)
                 'wor_tim': '2000',          # WOR Timing (irrelevant bei WOROFF)
                 'crypt': 0                  # Keine Verschlüsselung (Repeater-Kompatibilität)
