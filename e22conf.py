@@ -71,7 +71,14 @@ def create_config(address, network_address, channel, air_rate, baud_rate, parity
     air_rates = {"0.3k": 0, "1.2k": 1, "2.4k": 2, "4.8k": 3, "9.6k": 4, "19.2k": 5, "38.4k": 6, "62.5k": 7}
     baud_rates = {"1200": 0, "2400": 1, "4800": 2, "9600": 3}
     parities = {"8N1": 0, "8O1": 1, "8E1": 2}
+    # REG1 lower two bits encode 13/18/22/27 dBm (values 0-3). 30 dBm is not
+    # representable in these two bits for standard E22 modules. If the user
+    # requests 30dBm explicitly, fail with a clear message rather than writing
+    # an incorrect value.
     powers = {"13dBm": 0, "18dBm": 1, "22dBm": 2, "27dBm": 3}
+
+    if power == "30dBm":
+        raise ValueError("30dBm is not supported via REG1 on standard E22 modules. Use an E90 module or hardware PWMAX control for 30dBm.")
 
     reg0 = (baud_rates[baud_rate] << 5) | (parities[parity] << 3) | air_rates[air_rate]
     reg1 = 0xE0 | powers[power]  # Assuming other bits in REG1 are set to 1
@@ -99,7 +106,11 @@ def main():
     parser.add_argument("--air-rate", choices=["0.3k", "1.2k", "2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k"], help="Set air rate")
     parser.add_argument("--baud-rate", choices=["1200", "2400", "4800", "9600"], help="Set baud rate")
     parser.add_argument("--parity", choices=["8N1", "8O1", "8E1"], help="Set parity")
-    parser.add_argument("--power", choices=["13dBm", "18dBm", "22dBm", "27dBm"], help="Set transmitting power")
+    # E22 supports 13/18/22/27 dBm via REG1. 30 dBm (1W) is not representable
+    # by REG1 for standard E22 modules; it requires different hardware or a
+    # different module (e.g. E90). We allow the CLI value for visibility but
+    # will raise an error if the user attempts to write 30dBm.
+    parser.add_argument("--power", choices=["13dBm", "18dBm", "22dBm", "27dBm", "30dBm"], help="Set transmitting power (13/18/22/27 dBm; 30 dBm may not be supported)")
     parser.add_argument("--fixed-transmission", choices=["0", "1"], help="Set fixed-point transmission (0: Transparent, 1: Fixed-point)")
     parser.add_argument("--relay-function", choices=["0", "1"], help="Set relay function (0: Disable, 1: Enable)")
     parser.add_argument("--lbt-enable", choices=["0", "1"], help="Set LBT enable (0: Disable, 1: Enable)")

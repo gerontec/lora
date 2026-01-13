@@ -88,7 +88,14 @@ def create_config(address, network_address, channel, air_rate, baud_rate, parity
     air_rates = {"0.3k": 0, "1.2k": 1, "2.4k": 2, "4.8k": 3, "9.6k": 4, "19.2k": 5, "38.4k": 6, "62.5k": 7}
     baud_rates = {"1200": 0, "2400": 1, "4800": 2, "9600": 3, "19200": 4, "38400": 5, "57600": 6, "115200": 7}
     parities = {"8N1": 0, "8O1": 1, "8E1": 2}
+    # REG1 lower two bits encode 13/18/22/27 dBm (values 0-3). 30 dBm is not
+    # representable in these two bits for standard E22 modules. Detect explicit
+    # requests for 30dBm and return a clear error to avoid silently writing an
+    # incorrect value (which previously led to 13dBm being applied).
     powers = {"13dBm": 0, "18dBm": 1, "22dBm": 2, "27dBm": 3}
+
+    if power == "30dBm":
+        raise ValueError("30dBm is not supported via REG1 on standard E22 modules. Use an E90 module or hardware PWMAX control for 30dBm.")
 
     reg0 = (baud_rates[baud_rate] << 5) | (parities[parity] << 3) | air_rates[air_rate]
     reg1 = 0xE0 | powers[power]  # Base configuration for REG1
@@ -151,13 +158,19 @@ def read_rssi(ser):
 def main():
     parser = argparse.ArgumentParser(description="Read/Write configuration for E22 LoRa module")
     parser.add_argument("--port", default="/dev/ttyUSB0", help="Serial port")
+    parser.add_argument("--module", choices=["E22", "E90"], default="E22", help="Module type: E22 (register protocol) or E90 (AT commands)")
+    parser.add_argument("--raw-hex", help="Send raw hex byte sequence to serial (e.g. 'C00009FFFF0062E317100000')")
     parser.add_argument("--address", type=lambda x: int(x, 0), help="Set address (e.g., 0x1234)")
     parser.add_argument("--network-address", type=lambda x: int(x, 0), default=0, help="Set network address (e.g., 0x00)")
     parser.add_argument("--channel", type=int, help="Set channel (0-83)")
     parser.add_argument("--air-rate", choices=["0.3k", "1.2k", "2.4k", "4.8k", "9.6k", "19.2k", "38.4k", "62.5k"], help="Set air rate")
     parser.add_argument("--baud-rate", choices=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"], help="Set baud rate")
     parser.add_argument("--parity", choices=["8N1", "8O1", "8E1"], help="Set parity")
-    parser.add_argument("--power", choices=["13dBm", "18dBm", "22dBm", "27dBm"], help="Set transmitting power")
+    # E22 supports 13/18/22/27 dBm via REG1. 30 dBm (1W) is not representable
+    # by REG1 for standard E22 modules; it requires different hardware or a
+    # different module (e.g. E90). We allow the CLI value for visibility but
+    # will raise an error if the user attempts to write 30dBm.
+    parser.add_argument("--power", choices=["13dBm", "18dBm", "22dBm", "27dBm", "30dBm"], help="Set transmitting power (13/18/22/27 dBm; 30 dBm may not be supported)")
     parser.add_argument("--fixed-transmission", choices=["0", "1"], help="Set fixed-point transmission (0: Transparent, 1: Fixed-point)")
     parser.add_argument("--relay-function", choices=["0", "1"], help="Set relay function (0: Disable, 1: Enable)")
     parser.add_argument("--lbt-enable", choices=["0", "1"], help="Set LBT enable (0: Disable, 1: Enable)")
@@ -182,6 +195,60 @@ def main():
 
             current_config = read_config(ser)
             parsed_config = parse_config(current_config)
+
+            # If `--raw-hex` was provided, send the exact byte sequence and exit.
+            if args.raw_hex:
+                # Allow spaces in the hex string
+                hexstr = args.raw_hex.replace(' ', '').replace('\n', '')
+                try:
+                    payload = bytes.fromhex(hexstr)
+                except ValueError:
+                    raise ValueError("Invalid --raw-hex value: must be hex bytes, e.g. C00009FFFF0062E317100000")
+                logging.debug(f"Sending raw bytes: {payload.hex()}")
+                ser.write(payload)
+                time.sleep(0.1)
+                resp = ser.read(256)
+                logging.debug(f"Received response: {resp.hex()}")
+                print(f"Sent: {payload.hex().upper()}")
+                print(f"Resp: {resp.hex().upper()}")
+                return
+
+            # If user selected an E90 device, use AT commands for settings that
+            # E90 manages differently (power via PWMAX/PWMID etc.). Support
+            # direct requests for 30dBm/33dBm by mapping them to PWMAX.
+            if args.module == "E90" and args.power is not None:
+                # Map requested power to E90 tx_pow tokens
+                p = args.power
+                if p in ("30dBm", "33dBm"):
+                    tx_pow = "PWMAX"
+                else:
+                    raise ValueError("For E90 modules, only 30dBm/33dBm are supported via this helper; use e90_repeater_setup.py for full control.")
+
+                # Build AT+LORA parameter set using parsed values where sensible
+                addr = 65535
+                netid = int(parsed_config.get('Network Address', '0x00'), 16)
+                air_baud = str(parsed_config.get('Baud Rate', '9600'))
+                pack_length = '240'
+                rssi_en = 'RSCHON' if parsed_config.get('RSSI Enable', 'Disabled') == 'Enabled' else 'RSCHOFF'
+                channel = parsed_config.get('Channel', 0)
+                rssi_data = 'RSDATON'
+                tr_mod = 'TRNOR'
+                relay = 'RLYON' if parsed_config.get('Relay Function', 'Disabled') == 'Enabled' else 'RLYOFF'
+                lbt = 'LBTOFF' if parsed_config.get('LBT Enable', 'Disabled') == 'Disabled' else 'LBTON'
+                wor = 'WOROFF'
+                wor_tim = '2000'
+                crypt = 0
+
+                # Compose AT command and send
+                at_params = [str(addr), str(netid), air_baud, pack_length, rssi_en, tx_pow, str(channel), rssi_data, tr_mod, relay, lbt, wor, wor_tim, str(crypt)]
+                at_cmd = "AT+LORA=" + ",".join(at_params) + "\r\n"
+                logging.info(f"Sending E90 AT command: {at_cmd.strip()}")
+                ser.write(at_cmd.encode('utf-8'))
+                time.sleep(1.0)
+                resp = ser.read(ser.in_waiting or 100)
+                logging.info(f"E90 response: {resp.decode('utf-8', errors='ignore').strip()}")
+                print("E90 AT command sent — check device response above.")
+                return
 
             if any([args.address, args.network_address, args.channel, args.air_rate, args.baud_rate, args.parity, args.power, 
                     args.fixed_transmission, args.relay_function, args.lbt_enable, args.rssi_enable]):
