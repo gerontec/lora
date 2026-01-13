@@ -19,9 +19,16 @@ import time
 DEFAULT_PORT = '/dev/ttyUSB0'
 DEFAULT_BAUDRATE = 9600  # Standard für E90-DTU Konfiguration
 
-def send_at_command(ser, command, wait_time=0.5):
+def send_at_command(ser, command, wait_time=0.5, toggle_rts=False):
     """Sendet AT-Command über RS485 und gibt Antwort zurück"""
     print(f"→ Sende: {command.strip()}")
+    # If using an RS485 adapter that requires driver enable, toggle RTS
+    try:
+        if toggle_rts:
+            ser.rts = True
+    except Exception:
+        pass
+
     ser.write(command.encode())
     ser.flush()
     time.sleep(wait_time)
@@ -42,6 +49,12 @@ def send_at_command(ser, command, wait_time=0.5):
         print(f"← Empfangen (decoded): {response_str}")
     else:
         print("← Empfangen: <no response>")
+
+    try:
+        if toggle_rts:
+            ser.rts = False
+    except Exception:
+        pass
 
     return response
 
@@ -147,6 +160,7 @@ Beispiele:
                        choices=['PWMIN', 'PWLOW', 'PWMID', 'PWMAX'],
                        help='TX Power (PWMAX empfohlen für Berg)')
     parser.add_argument('--lbt', default='LBTOFF', choices=['LBTOFF', 'LBTON'], help='Listen Before Talk (LBTOFF or LBTON)')
+    parser.add_argument('--rs485', action='store_true', help='Toggle RTS around writes for RS485 transceivers')
 
     args = parser.parse_args()
 
