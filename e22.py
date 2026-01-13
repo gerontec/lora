@@ -196,6 +196,13 @@ def main():
             current_config = read_config(ser)
             parsed_config = parse_config(current_config)
 
+            # Vendor/raw power sequence map. Map a `--power` value to a
+            # pre-authorized raw hex sequence to send directly to the module.
+            # User-provided example for 27dBm worked; add 30dBm mapping here.
+            POWER_RAW_MAP = {
+                "30dBm": "C00009FFFF0062E317100000",
+            }
+
             # If `--raw-hex` was provided, send the exact byte sequence and exit.
             if args.raw_hex:
                 # Allow spaces in the hex string
@@ -274,23 +281,45 @@ def main():
                     parsed_config['LBT Enable'] = "Enabled" if args.lbt_enable == "1" else "Disabled"
                 if args.rssi_enable is not None:
                     parsed_config['RSSI Enable'] = "Enabled" if args.rssi_enable == "1" else "Disabled"
+                # If the requested power is one of the vendor-provided raw
+                # sequences, send it directly and skip REG1 writes which
+                # cannot encode 30dBm.
+                skip_reg_write = False
+                requested_power = parsed_config.get('Transmitting Power')
+                if requested_power in POWER_RAW_MAP:
+                    hexstr = POWER_RAW_MAP[requested_power].replace(' ', '')
+                    try:
+                        payload = bytes.fromhex(hexstr)
+                    except ValueError:
+                        raise ValueError(f"Invalid hex configured for power mapping: {hexstr}")
+                    logging.debug(f"Sending vendor raw power bytes for {requested_power}: {hexstr.lower()}")
+                    ser.write(payload)
+                    time.sleep(0.1)
+                    resp = ser.read(256)
+                    logging.debug(f"Received response: {resp.hex()}")
+                    print(f"Sent raw power sequence for {requested_power}")
+                    # Re-read config to reflect new settings
+                    current_config = read_config(ser)
+                    parsed_config = parse_config(current_config)
+                    skip_reg_write = True
 
-                new_config = create_config(
-                    int(parsed_config['Address'], 16),
-                    int(parsed_config['Network Address'], 16),
-                    parsed_config['Channel'],
-                    parsed_config['Air Rate'],
-                    parsed_config['Baud Rate'],
-                    parsed_config['Parity'],
-                    parsed_config['Transmitting Power'],
-                    "1" if parsed_config['Fixed Transmission'] == "Fixed-point" else "0",
-                    "1" if parsed_config['Relay Function'] == "Enabled" else "0",
-                    "1" if parsed_config['LBT Enable'] == "Enabled" else "0",
-                    "1" if parsed_config['RSSI Enable'] == "Enabled" else "0"
-                )
+                if not skip_reg_write:
+                    new_config = create_config(
+                        int(parsed_config['Address'], 16),
+                        int(parsed_config['Network Address'], 16),
+                        parsed_config['Channel'],
+                        parsed_config['Air Rate'],
+                        parsed_config['Baud Rate'],
+                        parsed_config['Parity'],
+                        parsed_config['Transmitting Power'],
+                        "1" if parsed_config['Fixed Transmission'] == "Fixed-point" else "0",
+                        "1" if parsed_config['Relay Function'] == "Enabled" else "0",
+                        "1" if parsed_config['LBT Enable'] == "Enabled" else "0",
+                        "1" if parsed_config['RSSI Enable'] == "Enabled" else "0"
+                    )
 
-                write_config(ser, new_config)
-                print("Configuration updated successfully.")
+                    write_config(ser, new_config)
+                    print("Configuration updated successfully.")
                 
                 # If baud rate was changed, we need to close and reopen the serial connection with the new baud rate
                 if args.baud_rate:
