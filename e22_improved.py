@@ -211,9 +211,12 @@ class EbyteE22:
         if not 0 <= self.config['channel'] <= 83:
             raise ValueError(f"Invalid channel: {self.config['channel']}")
 
-    def connect(self) -> bool:
+    def connect(self, auto_detect: bool = True) -> bool:
         """
         Open serial connection to E22 module.
+
+        Args:
+            auto_detect: If True, automatically detect module model
 
         Returns:
             True if connection successful, False otherwise
@@ -230,6 +233,41 @@ class EbyteE22:
             time.sleep(0.1)
             if self.debug:
                 print(f"✓ Connected to {self.port} at {self.config['baudrate']} baud")
+
+            # Auto-detect module model
+            if auto_detect:
+                try:
+                    version_info = self.get_version()
+                    freq = version_info.get('frequency', 'Unknown')
+
+                    if self.debug:
+                        print(f"✓ Detected module frequency: {freq}")
+
+                    # Update model in config based on detected frequency
+                    if '400' in freq or '433' in freq or '470' in freq:
+                        # It's a 400MHz variant
+                        if 'T30' in self.model.upper():
+                            self.config['model'] = f"400T30S"
+                        elif 'T27' in self.model.upper():
+                            self.config['model'] = f"400T27S"
+                        else:
+                            self.config['model'] = f"400T22S"
+                    elif '868' in freq or '915' in freq or '900' in freq:
+                        # It's a 900MHz variant
+                        if 'T30' in self.model.upper():
+                            self.config['model'] = f"900T30S"
+                        elif 'T27' in self.model.upper():
+                            self.config['model'] = f"900T27S"
+                        else:
+                            self.config['model'] = f"900T22D"
+
+                    if self.debug:
+                        print(f"✓ Updated model to: {self.config['model']}")
+
+                except Exception as e:
+                    if self.debug:
+                        print(f"⚠ Auto-detection failed: {e}, using default model")
+
             return True
         except serial.SerialException as e:
             print(f"✗ Error connecting to {self.port}: {e}")
@@ -402,6 +440,45 @@ class EbyteE22:
 
         return config
 
+    def get_version(self) -> Dict[str, Any]:
+        """
+        Read module version and model information.
+
+        Returns:
+            Dictionary with model, version, and frequency info
+        """
+        command = bytes([self.CMDS['getVersion'], 0x00, 0x00])
+        response = self._send_command(command, wait_time=0.2)
+
+        if len(response) < 4:
+            raise ValueError(f"Invalid version response length: {len(response)}")
+
+        version_info = {
+            'header': response[0],
+            'model': response[1],
+            'version': response[2],
+            'features': response[3]
+        }
+
+        # Decode frequency from byte 4
+        if len(response) >= 5:
+            freq_map = {
+                0x32: '433MHz',
+                0x38: '470MHz',
+                0x45: '868MHz',
+                0x44: '915MHz',
+                0x46: '170MHz'
+            }
+            version_info['frequency'] = freq_map.get(response[4], f'Unknown(0x{response[4]:02X})')
+            version_info['freq_byte'] = response[4]
+        else:
+            version_info['frequency'] = 'Unknown'
+
+        if self.debug:
+            print(f"Module Version: {version_info}")
+
+        return version_info
+
     def read_config(self) -> Dict[str, Any]:
         """
         Read current configuration from module.
@@ -502,6 +579,8 @@ def main():
     parser.add_argument('--model', default='900T22D', help='E22 model variant')
     parser.add_argument('--read', action='store_true', help='Read current config')
     parser.add_argument('--write', action='store_true', help='Write config to module')
+    parser.add_argument('--version', action='store_true', help='Show module version info')
+    parser.add_argument('--no-auto-detect', action='store_true', help='Disable auto-detection of module model')
     parser.add_argument('--address', type=lambda x: int(x, 0), help='Module address (hex)')
     parser.add_argument('--channel', type=int, help='Channel number')
     parser.add_argument('--power', choices=['22dBm', '17dBm', '13dBm', '10dBm'],
@@ -522,11 +601,24 @@ def main():
         debug=args.debug
     )
 
-    # Connect to module
-    if not e22.connect():
+    # Connect to module (with auto-detect unless disabled)
+    if not e22.connect(auto_detect=not args.no_auto_detect):
         return 1
 
     try:
+        if args.version:
+            # Show version information
+            version_info = e22.get_version()
+            print('=' * 60)
+            print('E22 MODULE VERSION INFO')
+            print('=' * 60)
+            print(f"Header:      0x{version_info['header']:02X}")
+            print(f"Model:       0x{version_info['model']:02X}")
+            print(f"Version:     0x{version_info['version']:02X}")
+            print(f"Features:    0x{version_info['features']:02X}")
+            print(f"Frequency:   {version_info.get('frequency', 'Unknown')}")
+            print('=' * 60)
+
         if args.read:
             # Read configuration from module
             config = e22.read_config()
